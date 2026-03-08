@@ -1,0 +1,53 @@
+{
+  "model_name": "RandomForest",
+  "accuracy": 1.0,
+  "roc_auc": 1.0,
+  "brier_score": 0.0301,
+  "cv_accuracy_mean": 1.0,
+  "cv_accuracy_std": 0.0,
+  "train_samples": 96,
+  "test_samples": 24,
+  "feature_count": 33,
+  "top_features": [
+    {
+      "feature": "diff_win_rate",
+      "importance": 0.6063
+    },
+    {
+      "feature": "away_win_rate",
+      "importance": 0.2544
+    },
+    {
+      "feature": "home_net_rating",
+      "importance": 0.0634
+    },
+    {
+      "feature": "away_net_rating",
+      "importance": 0.0513
+    },
+    {
+      "feature": "home_win_rate",
+      "importance": 0.0245
+    },
+    {
+      "feature": "odds_implied_home_prob",
+      "importance": 0.0
+    },
+    {
+      "feature": "away_days_rest",
+      "importance": 0.0
+    },
+    {
+      "feature": "diff_net_rating",
+      "importance": 0.0
+    },
+    {
+      "feature": "diff_last_5",
+      "importance": 0.0
+    },
+    {
+      "feature": "away_true_shooting",
+      "importance": 0.0
+    }
+  ]
+}
