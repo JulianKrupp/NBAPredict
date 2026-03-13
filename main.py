@@ -1,11 +1,17 @@
 """
-NBA Tracker – Hauptprogramm
-Spielergebnisse, Statistiken, KI-Vorhersagen und Wettquoten-Vergleich.
+NBA Tracker – Einstiegspunkt
+
+Subkommandos:
+  live, scores, standings, team
+  predict, ml-predict
+  train collect|model|all|metrics
+  compare
 """
 
 import argparse
 import sys
 import logging
+
 from src.utils.logger import setup_logger
 from src.utils.config import Config
 from src.utils.display import display_games, display_prediction, display_standings
@@ -19,37 +25,38 @@ from src.ml.comparison import OddsVsMLComparison
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="NBA Tracker – Ergebnisse, KI-Vorhersagen & Wettquoten-Vergleich",
+        description="NBA Tracker – Ergebnisse, KI-Vorhersagen & Wettquoten",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    subparsers = parser.add_subparsers(dest="command", help="Verfügbare Befehle")
+    sub = parser.add_subparsers(dest="command")
 
-    subparsers.add_parser("live", help="Aktuelle Live-Spiele")
-    scores_p = subparsers.add_parser("scores", help="Spielergebnisse eines Datums")
-    scores_p.add_argument("--date", type=str, default=None, help="YYYY-MM-DD")
-    subparsers.add_parser("standings", help="Tabellenstände")
-    team_p = subparsers.add_parser("team", help="Teamstatistiken")
-    team_p.add_argument("team_name", type=str)
-    pred_p = subparsers.add_parser("predict", help="Regelbasierte Vorhersage")
-    pred_p.add_argument("home_team", type=str)
-    pred_p.add_argument("away_team", type=str)
+    sub.add_parser("live")
+    scores_p = sub.add_parser("scores")
+    scores_p.add_argument("--date", type=str, default=None)
+    sub.add_parser("standings")
+    team_p = sub.add_parser("team")
+    team_p.add_argument("team_name")
 
-    ml_p = subparsers.add_parser("ml-predict", help="KI-Vorhersage + Vergleich")
-    ml_p.add_argument("home_team", type=str)
-    ml_p.add_argument("away_team", type=str)
+    pred_p = sub.add_parser("predict")
+    pred_p.add_argument("home_team")
+    pred_p.add_argument("away_team")
 
-    train_p = subparsers.add_parser("train", help="ML-Modell trainieren")
+    ml_p = sub.add_parser("ml-predict")
+    ml_p.add_argument("home_team")
+    ml_p.add_argument("away_team")
+
+    train_p  = sub.add_parser("train")
     train_sub = train_p.add_subparsers(dest="train_command")
-    coll_p = train_sub.add_parser("collect", help="Trainingsdaten sammeln")
+    coll_p = train_sub.add_parser("collect")
     coll_p.add_argument("--seasons", nargs="+", type=int, default=[2023, 2024])
     coll_p.add_argument("--max-games", type=int, default=300)
-    train_sub.add_parser("model", help="Modell trainieren")
-    all_p = train_sub.add_parser("all", help="Daten + Training komplett")
+    train_sub.add_parser("model")
+    all_p = train_sub.add_parser("all")
     all_p.add_argument("--seasons", nargs="+", type=int, default=[2023, 2024])
     all_p.add_argument("--max-games", type=int, default=300)
-    train_sub.add_parser("metrics", help="Modell-Metriken anzeigen")
+    train_sub.add_parser("metrics")
 
-    comp_p = subparsers.add_parser("compare", help="KI vs. Wettquoten Vergleich")
+    comp_p = sub.add_parser("compare")
     comp_p.add_argument("--home", type=str, default=None)
     comp_p.add_argument("--away", type=str, default=None)
 
@@ -59,23 +66,23 @@ def build_argument_parser() -> argparse.ArgumentParser:
 def handle_live(nba_client):
     games = nba_client.get_live_games()
     if not games:
-        print("Aktuell keine Live-Spiele.")
+        print("Keine Live-Spiele.")
         return
-    display_games(games, title="🏀 Live-Spiele")
+    display_games(games, "🏀 Live-Spiele")
 
 
 def handle_scores(nba_client, game_date):
     games = nba_client.get_games_by_date(game_date)
     if not games:
-        print(f"Keine Spiele für: {game_date or 'heute'}.")
+        print(f"Keine Spiele für {game_date or 'heute'}.")
         return
-    display_games(games, title=f"📅 Spiele am {game_date or 'heute'}")
+    display_games(games, f"📅 Spiele – {game_date or 'heute'}")
 
 
 def handle_standings(nba_client):
     standings = nba_client.get_standings()
     if not standings:
-        print("Keine Tabellendaten.")
+        print("Keine Tabellendaten verfügbar.")
         return
     display_standings(standings)
 
@@ -85,47 +92,44 @@ def handle_team(nba_client, team_name):
     if not stats:
         print(f"Team '{team_name}' nicht gefunden.")
         return
-    print(f"\n{'='*50}")
-    print(f"📊 Team-Statistiken: {stats.name}")
-    print(f"{'='*50}")
+    print(f"\n{'='*50}\n  {stats.name}\n{'='*50}")
     print(f"  Siege / Niederlagen : {stats.wins} / {stats.losses}")
     print(f"  Win-Rate            : {stats.win_rate:.1%}")
     print(f"  Punkte Ø            : {stats.avg_points_scored:.1f}")
     print(f"  Gegenpunkte Ø       : {stats.avg_points_allowed:.1f}")
-    print(f"  Punkt-Differenz Ø   : {stats.point_differential:.1f}")
+    print(f"  Punktdifferenz Ø    : {stats.point_differential:+.1f}")
     print(f"  Heimsieg-Rate       : {stats.home_win_rate:.1%}")
     print(f"  Auswärtssieg-Rate   : {stats.away_win_rate:.1%}")
+    if stats.has_recent_form_data:
+        print(f"  Form (L5 / L10)     : {stats.last_5_win_rate:.1%} / {stats.last_10_win_rate:.1%}")
     print(f"{'='*50}\n")
 
 
 def handle_predict(nba_client, odds_client, home_name, away_name):
-    home_stats = nba_client.get_team_stats(home_name)
-    away_stats = nba_client.get_team_stats(away_name)
-    if not home_stats or not away_stats:
+    home = nba_client.get_team_stats(home_name)
+    away = nba_client.get_team_stats(away_name)
+    if not home or not away:
         print("Fehler: Team nicht gefunden.")
         return
     odds = odds_client.get_odds(home_name, away_name)
-    predictor = GamePredictor()
-    result = predictor.predict(home_stats, away_stats, odds)
-    display_prediction(result, home_stats.name, away_stats.name)
+    result = GamePredictor().predict(home, away, odds)
+    display_prediction(result, home.name, away.name)
 
 
 def handle_ml_predict(nba_client, odds_client, ml_predictor, home_name, away_name):
-    home_stats = nba_client.get_team_stats(home_name)
-    away_stats = nba_client.get_team_stats(away_name)
-    if not home_stats or not away_stats:
+    home = nba_client.get_team_stats(home_name)
+    away = nba_client.get_team_stats(away_name)
+    if not home or not away:
         print("Fehler: Team nicht gefunden.")
         return
 
     if not ml_predictor.is_model_available():
-        print("\n  ⚠️  Kein trainiertes ML-Modell gefunden.")
-        print("  Führe zuerst 'python main.py train all' aus.\n")
-        print("  Nutze regelbasierte Vorhersage als Fallback...\n")
+        print("\n  ⚠️  Kein Modell vorhanden. Erst 'python main.py train all' ausführen.\n")
         handle_predict(nba_client, odds_client, home_name, away_name)
         return
 
-    odds = odds_client.get_odds(home_name, away_name)
-    result = ml_predictor.predict(home_stats, away_stats, odds)
+    odds   = odds_client.get_odds(home_name, away_name)
+    result = ml_predictor.predict(home, away, odds)
     display_ml_prediction(result)
 
 
@@ -133,19 +137,18 @@ def handle_train(config, args):
     from src.ml.data_collector import TrainingDataCollector
     from src.ml.model_trainer import NBAModelTrainer
 
-    train_command = getattr(args, "train_command", None)
+    cmd = getattr(args, "train_command", None)
 
-    if train_command == "collect":
+    if cmd == "collect":
         collector = TrainingDataCollector(config)
         count = collector.collect(seasons=args.seasons, max_games=args.max_games)
-        print(f"✅ {count} Trainingssamples gespeichert.")
+        print(f"✅ {count} Samples gespeichert.")
 
-    elif train_command == "model":
-        trainer = NBAModelTrainer()
-        metrics = trainer.train()
+    elif cmd == "model":
+        metrics = NBAModelTrainer().train()
         print(f"✅ Modell gespeichert (Accuracy: {metrics.accuracy:.1%})")
 
-    elif train_command == "all":
+    elif cmd == "all":
         print("Schritt 1/2: Trainingsdaten sammeln...")
         collector = TrainingDataCollector(config)
         samples = collector.collect_with_progress(
@@ -156,17 +159,15 @@ def handle_train(config, args):
             print("Fehler: Keine Trainingsdaten gesammelt.")
             return
         print(f"\nSchritt 2/2: Modell trainieren ({len(samples)} Samples)...")
-        trainer = NBAModelTrainer()
-        metrics = trainer.train(samples=samples)
-        print(f"✅ Fertig! Modell bereit (Accuracy: {metrics.accuracy:.1%})")
+        metrics = NBAModelTrainer().train(samples=samples)
+        print(f"✅ Fertig (Accuracy: {metrics.accuracy:.1%})")
 
-    elif train_command == "metrics":
-        trainer = NBAModelTrainer()
-        metrics = trainer.load_metrics()
+    elif cmd == "metrics":
+        metrics = NBAModelTrainer().load_metrics()
         if metrics:
             display_model_metrics(metrics)
         else:
-            print("Kein Modell vorhanden. Führe 'python main.py train all' aus.")
+            print("Kein Modell vorhanden. Erst 'python main.py train all' ausführen.")
 
     else:
         print("Verwendung: python main.py train [collect|model|all|metrics]")
@@ -179,10 +180,9 @@ def handle_compare(config, home_name, away_name):
         if entry:
             comparison.display_comparison_table([entry])
         else:
-            print(f"Vergleich für {home_name} vs {away_name} nicht möglich.")
+            print(f"Kein Vergleich möglich für {home_name} vs {away_name}.")
     else:
-        entries = comparison.run_comparison()
-        comparison.display_comparison_table(entries)
+        comparison.display_comparison_table(comparison.run_comparison())
 
 
 def main() -> int:
@@ -194,15 +194,15 @@ def main() -> int:
         logger.warning(warning)
 
     parser = build_argument_parser()
-    args = parser.parse_args()
+    args   = parser.parse_args()
 
     if not args.command:
         parser.print_help()
         return 0
 
     try:
-        nba_client = NBAApiClient(config)
-        odds_client = OddsApiClient(config)
+        nba_client   = NBAApiClient(config)
+        odds_client  = OddsApiClient(config)
         ml_predictor = MLPredictor(config)
 
         dispatch = {
@@ -210,14 +210,10 @@ def main() -> int:
             "scores":     lambda: handle_scores(nba_client, args.date),
             "standings":  lambda: handle_standings(nba_client),
             "team":       lambda: handle_team(nba_client, args.team_name),
-            "predict":    lambda: handle_predict(nba_client, odds_client,
-                                                  args.home_team, args.away_team),
-            "ml-predict": lambda: handle_ml_predict(nba_client, odds_client, ml_predictor,
-                                                      args.home_team, args.away_team),
+            "predict":    lambda: handle_predict(nba_client, odds_client, args.home_team, args.away_team),
+            "ml-predict": lambda: handle_ml_predict(nba_client, odds_client, ml_predictor, args.home_team, args.away_team),
             "train":      lambda: handle_train(config, args),
-            "compare":    lambda: handle_compare(config,
-                                                  getattr(args, "home", None),
-                                                  getattr(args, "away", None)),
+            "compare":    lambda: handle_compare(config, getattr(args, "home", None), getattr(args, "away", None)),
         }
 
         handler = dispatch.get(args.command)
@@ -231,14 +227,13 @@ def main() -> int:
         print("\nAbgebrochen.")
         return 0
     except FileNotFoundError as exc:
-        print(f"\n❌ Datei nicht gefunden: {exc}")
+        print(f"\n❌ {exc}")
         return 1
     except ValueError as exc:
-        print(f"\n❌ Fehler: {exc}")
+        print(f"\n❌ {exc}")
         return 1
     except Exception as exc:
         logger.exception("Unerwarteter Fehler: %s", exc)
-        print(f"\n❌ Unerwarteter Fehler: {exc}")
         return 1
 
     return 0

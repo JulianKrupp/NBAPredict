@@ -1,14 +1,10 @@
-"""
-Datenmodell für ein NBA-Team mit Statistiken.
-"""
-
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
 class Team:
-    """Repräsentiert ein NBA-Team mit aggregierten Saisonstatistiken."""
+    """NBA-Team mit aggregierten Saisonstatistiken."""
 
     team_id: int
     name: str
@@ -16,7 +12,6 @@ class Team:
     conference: str = ""
     division: str = ""
 
-    # Saisonstatistiken
     wins: int = 0
     losses: int = 0
     avg_points_scored: float = 0.0
@@ -26,7 +21,6 @@ class Team:
     away_wins: int = 0
     away_losses: int = 0
 
-    # Erweiterte Statistiken
     avg_rebounds: float = 0.0
     avg_assists: float = 0.0
     avg_steals: float = 0.0
@@ -36,21 +30,22 @@ class Team:
     three_point_percentage: float = 0.0
     free_throw_percentage: float = 0.0
 
+    # Chronologisch sortierte Ergebnisse der Saisonspiele (True = Sieg).
+    # Wird in _calculate_standings_from_games befüllt.
+    recent_game_results: list[bool] = field(default_factory=list)
+
     @property
     def total_games(self) -> int:
-        """Gesamtanzahl gespielter Spiele."""
         return self.wins + self.losses
 
     @property
     def win_rate(self) -> float:
-        """Siegquote (0.0–1.0)."""
         if self.total_games == 0:
             return 0.0
         return self.wins / self.total_games
 
     @property
     def home_win_rate(self) -> float:
-        """Heimsiegquote (0.0–1.0)."""
         home_games = self.home_wins + self.home_losses
         if home_games == 0:
             return 0.0
@@ -58,7 +53,6 @@ class Team:
 
     @property
     def away_win_rate(self) -> float:
-        """Auswärtssiegquote (0.0–1.0)."""
         away_games = self.away_wins + self.away_losses
         if away_games == 0:
             return 0.0
@@ -66,36 +60,50 @@ class Team:
 
     @property
     def point_differential(self) -> float:
-        """Durchschnittliche Punktedifferenz pro Spiel."""
         return self.avg_points_scored - self.avg_points_allowed
 
+    @property
+    def last_5_win_rate(self) -> float:
+        """Siegquote der letzten 5 Spiele, Fallback auf Saison-Gesamt."""
+        results = self.recent_game_results[-5:]
+        if not results:
+            return self.win_rate
+        return sum(results) / len(results)
+
+    @property
+    def last_10_win_rate(self) -> float:
+        """Siegquote der letzten 10 Spiele, Fallback auf Saison-Gesamt."""
+        results = self.recent_game_results[-10:]
+        if not results:
+            return self.win_rate
+        return sum(results) / len(results)
+
+    @property
+    def form_rating(self) -> float:
+        """Gewichtete Formkurve: letzte 5 Spiele (60 %) + letzte 10 (40 %).
+        Neuere Ergebnisse zählen stärker, ohne zu empfindlich auf einzelne
+        Ausreißer zu reagieren."""
+        if not self.recent_game_results:
+            return self.win_rate
+        return 0.6 * self.last_5_win_rate + 0.4 * self.last_10_win_rate
+
+    @property
+    def has_recent_form_data(self) -> bool:
+        """Mindestens 3 Spielergebnisse vorhanden."""
+        return len(self.recent_game_results) >= 3
+
     def __str__(self) -> str:
-        return f"{self.name} ({self.wins}W/{self.losses}L, {self.win_rate:.1%})"
+        form_str = ""
+        if self.has_recent_form_data:
+            form_str = f", L5: {self.last_5_win_rate:.0%}"
+        return f"{self.name} ({self.wins}W/{self.losses}L, {self.win_rate:.1%}{form_str})"
 
     @classmethod
     def from_standings_response(cls, data: dict) -> "Team":
-        """
-        Erstellt ein Team-Objekt aus einem Tabellenstands-API-Response.
-
-        Args:
-            data: Rohdaten aus der API-Antwort.
-
-        Returns:
-            Instanz von Team.
-        """
-        team_data = data.get("team", data)
         return cls(
-            team_id=team_data.get("id", 0),
-            name=team_data.get("full_name", team_data.get("name", "Unbekannt")),
-            abbreviation=team_data.get("abbreviation", ""),
-            conference=team_data.get("conference", ""),
-            division=team_data.get("division", ""),
-            wins=int(data.get("wins", 0)),
-            losses=int(data.get("losses", 0)),
-            home_wins=int(data.get("home_wins", 0)),
-            home_losses=int(data.get("home_losses", 0)),
-            away_wins=int(data.get("away_wins", 0)),
-            away_losses=int(data.get("away_losses", 0)),
-            avg_points_scored=float(data.get("pts", 0) or 0),
-            avg_points_allowed=float(data.get("opp_pts", 0) or 0),
+            team_id=data.get("id", 0),
+            name=data.get("full_name", ""),
+            abbreviation=data.get("abbreviation", ""),
+            conference=data.get("conference", ""),
+            division=data.get("division", ""),
         )
