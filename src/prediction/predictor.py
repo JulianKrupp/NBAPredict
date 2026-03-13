@@ -212,33 +212,58 @@ class GamePredictor:
         home_win_probability: float,
     ) -> tuple[float, float]:
         """
-        Schätzt das finale Spielergebnis basierend auf Teamdurchschnitt
-        und Siegwahrscheinlichkeit.
+        Schätzt das Spielergebnis aus Team-Statistiken und Siegwahrscheinlichkeit.
+
+        Formel (basketballanalytisch korrekt):
+          Basis-Erwartungswert = Mittelwert aus eigener Offense und gegnerischer Defense.
+
+            home_base = (home.avg_pts_scored + away.avg_pts_allowed) / 2
+            away_base = (away.avg_pts_scored + home.avg_pts_allowed) / 2
+
+          Beispiel OKC (114 Off, 106 Def) vs Denver (119 Off, 118 Def):
+            home_base = (114 + 118) / 2 = 116.0
+            away_base = (119 + 106) / 2 = 112.5
+
+          Dann Wahrscheinlichkeits-Aufschlag: edge = prob - 0.5 × Faktor 14
+          Bei 88% Wahrscheinlichkeit: edge = 0.38 × 14 = +5.3 Pkt Aufschlag
+            home = 116.0 + 2.65 = 118.7  →  OKC mehr Punkte ✓
+            away = 112.5 - 2.65 = 109.8  →  Denver weniger   ✓
+
+          Der Aufschlag ist absichtlich klein gehalten (Faktor 14), weil
+          basketball-statistisch auch klare Favoriten selten mehr als 15 Pkt
+          Vorsprung haben. Realwerte NBA 2024/25: Ø Siegmarge ~10 Pkt.
 
         Args:
             home:                  Heimteam-Statistiken.
             away:                  Auswärtsteam-Statistiken.
-            home_win_probability:  Siegwahrscheinlichkeit des Heimteams.
+            home_win_probability:  Siegwahrscheinlichkeit des Heimteams (0.0–1.0).
 
         Returns:
-            Tupel (home_score, away_score).
+            Tupel (home_score, away_score), Sieger hat garantiert mehr Punkte.
         """
-        home_base = home.avg_points_scored if home.avg_points_scored > 0 else NBA_AVG_POINTS
-        away_base = away.avg_points_scored if away.avg_points_scored > 0 else NBA_AVG_POINTS
+        home_off = home.avg_points_scored  if home.avg_points_scored  > 0 else NBA_AVG_POINTS
+        home_def = home.avg_points_allowed if home.avg_points_allowed > 0 else NBA_AVG_POINTS
+        away_off = away.avg_points_scored  if away.avg_points_scored  > 0 else NBA_AVG_POINTS
+        away_def = away.avg_points_allowed if away.avg_points_allowed > 0 else NBA_AVG_POINTS
 
-        # Verteidigungsqualität einrechnen
-        home_defense_factor = 1.0 - max(0.0, (away.avg_points_allowed - NBA_AVG_POINTS) / 50.0)
-        away_defense_factor = 1.0 - max(0.0, (home.avg_points_allowed - NBA_AVG_POINTS) / 50.0)
+        # Basis: eigene Offense trifft auf gegnerische Defense
+        home_base = (home_off + away_def) / 2.0
+        away_base = (away_off + home_def) / 2.0
 
-        raw_home_score = home_base * home_defense_factor
-        raw_away_score = away_base * away_defense_factor
+        # Wahrscheinlichkeits-Aufschlag: bei 50/50 → 0 Pkt, bei 65% → ±1.9 Pkt
+        # Faktor 25: Basis-Differenz trägt den Großteil, Prob feintunet
+        edge = (home_win_probability - 0.5) * 25.0
+        predicted_home = home_base + (edge / 2.0)
+        predicted_away = away_base - (edge / 2.0)
 
-        # Wahrscheinlichkeits-Bonus für den Favoriten
-        probability_adjustment = (home_win_probability - 0.5) * 10.0
-        predicted_home = raw_home_score + probability_adjustment
-        predicted_away = raw_away_score - probability_adjustment
+        # Sicherheitsnetz: Sieger hat immer mehr Punkte
+        # (greift nur wenn Basis-Werte extrem ungleich und Prob knapp bei 50%)
+        if home_win_probability >= 0.5 and predicted_home <= predicted_away:
+            predicted_home = predicted_away + 1.0
+        elif home_win_probability < 0.5 and predicted_away <= predicted_home:
+            predicted_away = predicted_home + 1.0
 
-        return round(max(80.0, predicted_home), 1), round(max(80.0, predicted_away), 1)
+        return round(max(85.0, predicted_home), 1), round(max(85.0, predicted_away), 1)
 
     @staticmethod
     def _compare_stats(

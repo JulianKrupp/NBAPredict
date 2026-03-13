@@ -93,9 +93,45 @@ class TestGamePredictor:
         home = make_team(avg_pts=115.0, avg_allowed=110.0)
         away = make_team(avg_pts=112.0, avg_allowed=108.0)
         result = self.predictor.predict(home, away)
-        # NBA-Punkte üblicherweise zwischen 80 und 150
-        assert 80 <= result.predicted_home_score <= 150
-        assert 80 <= result.predicted_away_score <= 150
+        assert 85 <= result.predicted_home_score <= 140
+        assert 85 <= result.predicted_away_score <= 140
+
+    def test_winner_always_has_higher_predicted_score(self):
+        """
+        Der vorhergesagte Sieger hat immer mehr Punkte als der Verlierer –
+        unabhängig vom historischen Durchschnitt der Teams.
+
+        Regressionstest: Denver (119 Ø Punkte) bekam mehr Punkte vorhergesagt
+        als OKC (114 Ø), obwohl OKC mit 88% Wahrscheinlichkeit gewonnen hätte,
+        weil die Schätzung früher auf avg_points_scored basierte.
+        """
+        okc   = make_team("OKC", wins=55, losses=10, avg_pts=114.0, avg_allowed=106.0,
+                          home_wins=30, home_losses=2, away_wins=25, away_losses=8)
+        denver = make_team("DEN", wins=30, losses=35, avg_pts=119.0, avg_allowed=118.0,
+                           home_wins=18, home_losses=18, away_wins=12, away_losses=17)
+        result = self.predictor.predict(okc, denver)
+        assert result.predicted_winner == "home", "OKC sollte Favorit sein"
+        assert result.predicted_home_score > result.predicted_away_score, (
+            f"Sieger OKC hat weniger Punkte: "
+            f"{result.predicted_home_score} vs {result.predicted_away_score}"
+        )
+
+    def test_score_difference_scales_with_probability(self):
+        """Höhere Siegwahrscheinlichkeit → größere Punktedifferenz."""
+        close_home = make_team("A", wins=35, losses=25)
+        close_away = make_team("B", wins=30, losses=30)
+        close = self.predictor.predict(close_home, close_away)
+        close_diff = abs(close.predicted_home_score - close.predicted_away_score)
+
+        clear_home = make_team("C", wins=60, losses=5, home_wins=35, home_losses=1)
+        clear_away = make_team("D", wins=10, losses=55, away_wins=3, away_losses=32)
+        clear = self.predictor.predict(clear_home, clear_away)
+        clear_diff = abs(clear.predicted_home_score - clear.predicted_away_score)
+
+        assert clear_diff > close_diff, (
+            f"Klarerer Favorit sollte größere Punktedifferenz haben: "
+            f"{clear_diff:.1f} vs {close_diff:.1f}"
+        )
 
     def test_factors_dict_contains_all_keys(self):
         """Das factors-Dictionary enthält alle definierten Faktoren."""

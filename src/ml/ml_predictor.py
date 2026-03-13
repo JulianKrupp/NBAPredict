@@ -264,7 +264,33 @@ class MLPredictor:
         ]
 
     def _get_advanced_stats(self, team: Team) -> AdvancedTeamStats:
-        """Berechnet Advanced Stats für ein Team."""
+        """
+        Berechnet Advanced Stats für ein Team.
+
+        Versucht zuerst, echte Form-Daten (letzte 10 Spiele) über die
+        BallDontLie-API zu laden, damit last_5_win_rate und last_10_win_rate
+        die aktuelle Form widerspiegeln – nicht den Saisondurchschnitt.
+
+        Falls der API-Abruf fehlschlägt (Rate-Limit, kein Netz, o.ä.),
+        fällt die Form-Berechnung auf die Saison-Win-Rate zurück.
+        """
+        recent_results: list[bool] = []
+        try:
+            from src.api.nba_api_client import NBAApiClient
+            nba_client = NBAApiClient(self.config)
+            recent_games = nba_client.get_recent_games(team.name, num_games=10)
+            # True = Sieg des abgefragten Teams
+            for game in recent_games:
+                if game.home_team == team.name:
+                    recent_results.append(game.home_score > game.away_score)
+                else:
+                    recent_results.append(game.away_score > game.home_score)
+        except Exception as exc:
+            self.logger.debug(
+                "Form-Daten für '%s' nicht verfügbar, nutze Saison-WR: %s",
+                team.name, exc,
+            )
+
         return self.stats_client.build_advanced_stats_from_basic(
             team_id=team.team_id,
             team_name=team.name,
@@ -272,6 +298,7 @@ class MLPredictor:
             losses=team.losses,
             avg_pts_scored=team.avg_points_scored,
             avg_pts_allowed=team.avg_points_allowed,
+            recent_game_results=recent_results if recent_results else None,
         )
 
     @staticmethod
