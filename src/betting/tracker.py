@@ -2,7 +2,8 @@
 Theoretischer Wett-Tracker – "Was wäre wenn"-Simulation.
 
 Speichert virtuelle Wetten in einer SQLite-Datenbank und berechnet
-Gewinn/Verlust, ROI und weitere Statistiken. Kein echtes Geld.
+Gewinn/Verlust, ROI und umfassende Effektivitäts-Statistiken.
+Kein echtes Geld.
 
 Datenbank: data/betting/bets.db
 """
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, date
 from pathlib import Path
@@ -20,8 +22,6 @@ logger = logging.getLogger(__name__)
 
 DB_DIR = Path("data/betting")
 DB_PATH = DB_DIR / "bets.db"
-
-# Standard-Einsatz pro Wette (virtuelle Einheiten)
 DEFAULT_STAKE = 10.0
 
 
@@ -31,23 +31,20 @@ class Bet:
     id: int
     home_team: str
     away_team: str
-    bet_on: str                          # Teamname, auf den gewettet wird
-    bet_side: Literal["home", "away"]    # 'home' oder 'away'
-    odds: float                          # Dezimalquote zum Zeitpunkt der Wette
-    stake: float                         # Virtueller Einsatz
-    ml_prob: float                       # KI-Wahrscheinlichkeit zum Wettzeitpunkt
-    odds_prob: float                     # Quoten-Wahrscheinlichkeit
-    edge: float                          # ml_prob - odds_prob
-    ev: float                            # Expected Value (ml_prob * odds - 1)
-    bet_rating: str                      # 'strong', 'good', 'slight', 'none'
-
-    # Ergebnis (erst nach Auflösung gesetzt)
+    bet_on: str
+    bet_side: Literal["home", "away"]
+    odds: float
+    stake: float
+    ml_prob: float
+    odds_prob: float
+    edge: float
+    ev: float
+    bet_rating: str
     status: Literal["open", "won", "lost"] = "open"
     actual_winner: str | None = None
-    payout: float = 0.0                  # 0 bei Verlust, stake * odds bei Gewinn
-    profit: float = 0.0                  # payout - stake
-
-    placed_at: str = ""                  # ISO-Zeitstempel
+    payout: float = 0.0
+    profit: float = 0.0
+    placed_at: str = ""
     resolved_at: str | None = None
 
     @property
@@ -69,21 +66,19 @@ class BettingStats:
     total_staked: float = 0.0
     total_payout: float = 0.0
     total_profit: float = 0.0
-    roi: float = 0.0                     # profit / staked * 100
+    roi: float = 0.0
     win_rate: float = 0.0
     avg_odds: float = 0.0
     avg_edge: float = 0.0
     best_streak: int = 0
-    current_streak: int = 0              # positiv = Gewinnserie, negativ = Verlustserie
+    current_streak: int = 0
     profit_by_rating: dict[str, float] | None = None
     record_by_rating: dict[str, dict] | None = None
 
     def to_dict(self) -> dict:
         return {
-            "total_bets": self.total_bets,
-            "open_bets": self.open_bets,
-            "won": self.won,
-            "lost": self.lost,
+            "total_bets": self.total_bets, "open_bets": self.open_bets,
+            "won": self.won, "lost": self.lost,
             "total_staked": round(self.total_staked, 2),
             "total_payout": round(self.total_payout, 2),
             "total_profit": round(self.total_profit, 2),
@@ -99,317 +94,400 @@ class BettingStats:
 
 
 class BettingTracker:
-    """
-    Verwaltet virtuelle Wetten in einer SQLite-Datenbank.
-
-    Methoden:
-      - place_bet()     → Neue Wette platzieren
-      - resolve_bet()   → Wette auflösen (gewonnen/verloren)
-      - get_open_bets() → Alle offenen Wetten
-      - get_all_bets()  → Alle Wetten (mit Filter)
-      - get_stats()     → Aggregierte Statistiken
-      - delete_bet()    → Einzelne Wette löschen
-      - reset()         → Alle Wetten löschen
-    """
 
     def __init__(self, db_path: Path | None = None) -> None:
         self.db_path = db_path or DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
-    # ── Öffentliche Methoden ──────────────────────────────────────────────
+    # ── CRUD ──────────────────────────────────────────────────────────────
 
-    def place_bet(
-        self,
-        home_team: str,
-        away_team: str,
-        bet_on: str,
-        bet_side: str,
-        odds: float,
-        ml_prob: float,
-        odds_prob: float,
-        edge: float,
-        ev: float,
-        bet_rating: str,
-        stake: float = DEFAULT_STAKE,
-    ) -> Bet:
-        """
-        Platziert eine neue virtuelle Wette.
-
-        Returns:
-            Das erstellte Bet-Objekt mit ID.
-        """
+    def place_bet(self, home_team: str, away_team: str, bet_on: str,
+                  bet_side: str, odds: float, ml_prob: float,
+                  odds_prob: float, edge: float, ev: float,
+                  bet_rating: str, stake: float = DEFAULT_STAKE) -> Bet:
         now = datetime.now().isoformat(timespec="seconds")
-
         with self._connect() as conn:
-            cursor = conn.execute(
-                """
-                INSERT INTO bets (
-                    home_team, away_team, bet_on, bet_side,
-                    odds, stake, ml_prob, odds_prob, edge, ev, bet_rating,
-                    status, payout, profit, placed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 0, 0, ?)
-                """,
-                (home_team, away_team, bet_on, bet_side,
-                 odds, stake, ml_prob, odds_prob, edge, ev, bet_rating,
-                 now),
-            )
-            bet_id = cursor.lastrowid
-
-        logger.info(
-            "Wette #%d platziert: %s auf %s @ %.2f (Edge: %.1f%%)",
-            bet_id, stake, bet_on, odds, edge * 100,
-        )
-
-        return Bet(
-            id=bet_id, home_team=home_team, away_team=away_team,
-            bet_on=bet_on, bet_side=bet_side, odds=odds, stake=stake,
-            ml_prob=ml_prob, odds_prob=odds_prob, edge=edge, ev=ev,
-            bet_rating=bet_rating, status="open", placed_at=now,
-        )
+            cur = conn.execute(
+                "INSERT INTO bets (home_team,away_team,bet_on,bet_side,"
+                "odds,stake,ml_prob,odds_prob,edge,ev,bet_rating,"
+                "status,payout,profit,placed_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,'open',0,0,?)",
+                (home_team, away_team, bet_on, bet_side, odds, stake,
+                 ml_prob, odds_prob, edge, ev, bet_rating, now))
+            bid = cur.lastrowid
+        return Bet(id=bid, home_team=home_team, away_team=away_team,
+                   bet_on=bet_on, bet_side=bet_side, odds=odds, stake=stake,
+                   ml_prob=ml_prob, odds_prob=odds_prob, edge=edge, ev=ev,
+                   bet_rating=bet_rating, status="open", placed_at=now)
 
     def resolve_bet(self, bet_id: int, actual_winner: str) -> Bet | None:
-        """
-        Löst eine offene Wette auf.
-
-        Args:
-            bet_id:        ID der Wette.
-            actual_winner: Name des tatsächlichen Gewinners.
-
-        Returns:
-            Aktualisiertes Bet-Objekt oder None wenn nicht gefunden.
-        """
         bet = self.get_bet(bet_id)
         if not bet or bet.status != "open":
             return None
-
-        won = actual_winner.lower().strip() in bet.bet_on.lower().strip() or \
-              bet.bet_on.lower().strip() in actual_winner.lower().strip()
-
+        won = (actual_winner.lower().strip() in bet.bet_on.lower().strip() or
+               bet.bet_on.lower().strip() in actual_winner.lower().strip())
         status = "won" if won else "lost"
         payout = bet.stake * bet.odds if won else 0.0
         profit = payout - bet.stake
         now = datetime.now().isoformat(timespec="seconds")
-
         with self._connect() as conn:
             conn.execute(
-                """
-                UPDATE bets
-                SET status = ?, actual_winner = ?, payout = ?, profit = ?, resolved_at = ?
-                WHERE id = ?
-                """,
-                (status, actual_winner, payout, profit, now, bet_id),
-            )
-
-        logger.info(
-            "Wette #%d aufgelöst: %s → %s (Profit: %+.2f)",
-            bet_id, status, actual_winner, profit,
-        )
-
-        bet.status = status
-        bet.actual_winner = actual_winner
-        bet.payout = payout
-        bet.profit = profit
-        bet.resolved_at = now
+                "UPDATE bets SET status=?,actual_winner=?,payout=?,profit=?,resolved_at=? WHERE id=?",
+                (status, actual_winner, payout, profit, now, bet_id))
+        bet.status, bet.actual_winner = status, actual_winner
+        bet.payout, bet.profit, bet.resolved_at = payout, profit, now
         return bet
 
     def get_bet(self, bet_id: int) -> Bet | None:
-        """Gibt eine einzelne Wette zurück."""
-        with self._connect() as conn:
-            row = conn.execute("SELECT * FROM bets WHERE id = ?", (bet_id,)).fetchone()
+        with self._connect() as c:
+            row = c.execute("SELECT * FROM bets WHERE id=?", (bet_id,)).fetchone()
         return self._row_to_bet(row) if row else None
 
     def get_open_bets(self) -> list[Bet]:
-        """Gibt alle offenen Wetten zurück."""
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM bets WHERE status = 'open' ORDER BY placed_at DESC"
-            ).fetchall()
+        with self._connect() as c:
+            rows = c.execute("SELECT * FROM bets WHERE status='open' ORDER BY placed_at DESC").fetchall()
         return [self._row_to_bet(r) for r in rows]
 
     def get_all_bets(self, limit: int = 100, status: str | None = None) -> list[Bet]:
-        """Gibt alle Wetten zurück (optional gefiltert nach Status)."""
-        query = "SELECT * FROM bets"
-        params: list = []
+        q, p = "SELECT * FROM bets", []
         if status:
-            query += " WHERE status = ?"
-            params.append(status)
-        query += " ORDER BY placed_at DESC LIMIT ?"
-        params.append(limit)
-
-        with self._connect() as conn:
-            rows = conn.execute(query, params).fetchall()
+            q += " WHERE status=?"
+            p.append(status)
+        q += " ORDER BY placed_at DESC LIMIT ?"
+        p.append(limit)
+        with self._connect() as c:
+            rows = c.execute(q, p).fetchall()
         return [self._row_to_bet(r) for r in rows]
 
-    def get_stats(self) -> BettingStats:
-        """Berechnet aggregierte Statistiken über alle aufgelösten Wetten."""
-        with self._connect() as conn:
-            all_rows = conn.execute(
-                "SELECT * FROM bets ORDER BY placed_at ASC"
-            ).fetchall()
+    def delete_bet(self, bet_id: int) -> bool:
+        with self._connect() as c:
+            return c.execute("DELETE FROM bets WHERE id=?", (bet_id,)).rowcount > 0
 
-        bets = [self._row_to_bet(r) for r in all_rows]
+    def reset(self) -> int:
+        with self._connect() as c:
+            n = c.execute("DELETE FROM bets").rowcount
+        logger.warning("Alle %d Wetten gelöscht.", n)
+        return n
+
+    # ── Basis-Statistiken ─────────────────────────────────────────────────
+
+    def get_stats(self) -> BettingStats:
+        bets = self._all_bets_sorted()
         if not bets:
             return BettingStats()
-
         resolved = [b for b in bets if b.status != "open"]
-        open_bets = [b for b in bets if b.status == "open"]
-        won = [b for b in resolved if b.status == "won"]
-        lost = [b for b in resolved if b.status == "lost"]
-
+        won = [b for b in resolved if b.is_won]
         total_staked = sum(b.stake for b in resolved)
         total_payout = sum(b.payout for b in resolved)
         total_profit = total_payout - total_staked
-
-        # Serien berechnen
         best_streak, current_streak = self._calc_streaks(resolved)
 
-        # Profit nach Rating
-        ratings = ["strong", "good", "slight", "none"]
-        profit_by_rating = {}
-        record_by_rating = {}
-        for rating in ratings:
-            r_bets = [b for b in resolved if b.bet_rating == rating]
-            if r_bets:
-                r_won = sum(1 for b in r_bets if b.status == "won")
-                r_profit = sum(b.profit for b in r_bets)
-                r_staked = sum(b.stake for b in r_bets)
-                profit_by_rating[rating] = round(r_profit, 2)
-                record_by_rating[rating] = {
-                    "bets": len(r_bets),
-                    "won": r_won,
-                    "lost": len(r_bets) - r_won,
-                    "win_rate": round(r_won / len(r_bets), 4) if r_bets else 0,
-                    "profit": round(r_profit, 2),
-                    "roi": round(r_profit / r_staked * 100, 2) if r_staked else 0,
-                }
+        record_by_rating, profit_by_rating = {}, {}
+        for rat in ("strong", "good", "slight", "none"):
+            rb = [b for b in resolved if b.bet_rating == rat]
+            if rb:
+                rw = sum(1 for b in rb if b.is_won)
+                rp = sum(b.profit for b in rb)
+                rs = sum(b.stake for b in rb)
+                profit_by_rating[rat] = round(rp, 2)
+                record_by_rating[rat] = {
+                    "bets": len(rb), "won": rw, "lost": len(rb) - rw,
+                    "win_rate": round(rw / len(rb), 4),
+                    "profit": round(rp, 2),
+                    "roi": round(rp / rs * 100, 2) if rs else 0}
 
         return BettingStats(
-            total_bets=len(bets),
-            open_bets=len(open_bets),
-            won=len(won),
-            lost=len(lost),
-            total_staked=total_staked,
-            total_payout=total_payout,
+            total_bets=len(bets), open_bets=sum(1 for b in bets if b.is_open),
+            won=len(won), lost=len(resolved) - len(won),
+            total_staked=total_staked, total_payout=total_payout,
             total_profit=total_profit,
             roi=round(total_profit / total_staked * 100, 2) if total_staked else 0,
             win_rate=len(won) / len(resolved) if resolved else 0,
             avg_odds=sum(b.odds for b in resolved) / len(resolved) if resolved else 0,
             avg_edge=sum(b.edge for b in resolved) / len(resolved) if resolved else 0,
-            best_streak=best_streak,
-            current_streak=current_streak,
-            profit_by_rating=profit_by_rating,
-            record_by_rating=record_by_rating,
-        )
+            best_streak=best_streak, current_streak=current_streak,
+            profit_by_rating=profit_by_rating, record_by_rating=record_by_rating)
 
     def get_profit_history(self) -> list[dict]:
-        """Gibt den kumulativen Profitverlauf zurück (für Chart)."""
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT placed_at, profit, status FROM bets "
-                "WHERE status != 'open' ORDER BY resolved_at ASC"
+        with self._connect() as c:
+            rows = c.execute(
+                "SELECT placed_at,profit,status FROM bets WHERE status!='open' ORDER BY resolved_at ASC"
             ).fetchall()
-
-        history = []
-        cumulative = 0.0
-        for row in rows:
-            cumulative += row["profit"]
-            history.append({
-                "date": row["placed_at"][:10],
-                "profit": round(row["profit"], 2),
-                "cumulative": round(cumulative, 2),
-                "result": row["status"],
-            })
+        history, cum = [], 0.0
+        for r in rows:
+            cum += r["profit"]
+            history.append({"date": r["placed_at"][:10], "profit": round(r["profit"], 2),
+                            "cumulative": round(cum, 2), "result": r["status"]})
         return history
 
-    def delete_bet(self, bet_id: int) -> bool:
-        """Löscht eine Wette."""
-        with self._connect() as conn:
-            cursor = conn.execute("DELETE FROM bets WHERE id = ?", (bet_id,))
-        return cursor.rowcount > 0
+    # ══════════════════════════════════════════════════════════════════════
+    #  ERWEITERTE ANALYTIK
+    # ══════════════════════════════════════════════════════════════════════
 
-    def reset(self) -> int:
-        """Löscht ALLE Wetten. Gibt die Anzahl gelöschter Wetten zurück."""
-        with self._connect() as conn:
-            cursor = conn.execute("DELETE FROM bets")
-        logger.warning("Alle %d Wetten gelöscht.", cursor.rowcount)
-        return cursor.rowcount
+    def get_analytics(self) -> dict:
+        """
+        Umfassende Effektivitäts-Analyse aller aufgelösten Wetten.
 
-    # ── Private Methoden ──────────────────────────────────────────────────
+        Dimensionen:
+          profit_history     – Kumulativer Profitverlauf (Chartdaten)
+          by_rating          – Bilanz pro Empfehlungsstufe
+          by_team            – Bilanz pro gewettetem Team
+          by_side            – Heim vs Auswärts
+          by_odds_range      – Nach Quotenbereich (1.0–1.5, 1.5–2.0, …)
+          by_edge_range      – Nach Edge-Bereich (0–5%, 5–10%, …)
+          calibration        – KI-Wahrsch. vs tatsächliche Win-Rate
+          expected_vs_actual – Erwarteter (EV) vs realer Profit
+          weekly             – Wöchentlicher Verlauf
+          kelly_analysis     – Kelly-Criterion-Simulation
+          avg_profit_won     – Ø Gewinn pro gewonnener Wette
+          avg_profit_lost    – Ø Verlust pro verlorener Wette
+        """
+        resolved = [b for b in self._all_bets_sorted() if b.status != "open"]
+        if not resolved:
+            return {"empty": True}
+
+        won_list = [b for b in resolved if b.is_won]
+        lost_list = [b for b in resolved if not b.is_won]
+
+        return {
+            "empty":              False,
+            "profit_history":     self.get_profit_history(),
+            "by_rating":          self._by_rating(resolved),
+            "by_team":            self._by_team(resolved),
+            "by_side":            self._by_side(resolved),
+            "by_odds_range":      self._by_odds_range(resolved),
+            "by_edge_range":      self._by_edge_range(resolved),
+            "calibration":        self._calibration(resolved),
+            "expected_vs_actual": self._expected_vs_actual(resolved),
+            "weekly":             self._weekly(resolved),
+            "kelly_analysis":     self._kelly(resolved),
+            "avg_profit_won":     round(sum(b.profit for b in won_list) / len(won_list), 2) if won_list else 0,
+            "avg_profit_lost":    round(sum(b.profit for b in lost_list) / len(lost_list), 2) if lost_list else 0,
+        }
+
+    # ── Analyse-Helfer ────────────────────────────────────────────────────
+
+    def _by_rating(self, resolved: list[Bet]) -> list[dict]:
+        labels = {"strong": "🔥 Stark", "good": "✅ Gut",
+                  "slight": "💡 Leicht", "none": "⏸️ Kein"}
+        result = []
+        for rat in ("strong", "good", "slight", "none"):
+            group = [b for b in resolved if b.bet_rating == rat]
+            if not group:
+                continue
+            w = sum(1 for b in group if b.is_won)
+            p = sum(b.profit for b in group)
+            s = sum(b.stake for b in group)
+            result.append({
+                "rating": rat, "label": labels[rat],
+                "bets": len(group), "won": w, "lost": len(group) - w,
+                "win_rate": round(w / len(group), 4),
+                "profit": round(p, 2),
+                "roi": round(p / s * 100, 2) if s else 0,
+                "avg_odds": round(sum(b.odds for b in group) / len(group), 2),
+                "avg_edge": round(sum(b.edge for b in group) / len(group), 4),
+            })
+        return result
+
+    def _by_team(self, resolved: list[Bet]) -> list[dict]:
+        teams: dict[str, dict] = defaultdict(
+            lambda: {"bets": 0, "won": 0, "staked": 0.0, "profit": 0.0})
+        for b in resolved:
+            t = teams[b.bet_on]
+            t["bets"] += 1
+            t["won"] += int(b.is_won)
+            t["staked"] += b.stake
+            t["profit"] += b.profit
+        out = []
+        for name, t in sorted(teams.items(), key=lambda x: x[1]["profit"], reverse=True):
+            out.append({
+                "team": name, "bets": t["bets"], "won": t["won"],
+                "lost": t["bets"] - t["won"],
+                "win_rate": round(t["won"] / t["bets"], 4),
+                "profit": round(t["profit"], 2),
+                "roi": round(t["profit"] / t["staked"] * 100, 2) if t["staked"] else 0})
+        return out
+
+    def _by_side(self, resolved: list[Bet]) -> dict:
+        sides = {"home": {"b": 0, "w": 0, "s": 0.0, "p": 0.0},
+                 "away": {"b": 0, "w": 0, "s": 0.0, "p": 0.0}}
+        for b in resolved:
+            x = sides.get(b.bet_side, sides["home"])
+            x["b"] += 1; x["w"] += int(b.is_won)
+            x["s"] += b.stake; x["p"] += b.profit
+        out = {}
+        for side, x in sides.items():
+            out[side] = {
+                "bets": x["b"], "won": x["w"], "lost": x["b"] - x["w"],
+                "win_rate": round(x["w"] / x["b"], 4) if x["b"] else 0,
+                "profit": round(x["p"], 2),
+                "roi": round(x["p"] / x["s"] * 100, 2) if x["s"] else 0}
+        return out
+
+    def _by_odds_range(self, resolved: list[Bet]) -> list[dict]:
+        return self._group_by_range(resolved, [
+            ("1.00–1.50", 1.0, 1.5), ("1.50–2.00", 1.5, 2.0),
+            ("2.00–2.50", 2.0, 2.5), ("2.50–3.50", 2.5, 3.5),
+            ("3.50+", 3.5, 99.0)], key=lambda b: b.odds)
+
+    def _by_edge_range(self, resolved: list[Bet]) -> list[dict]:
+        return self._group_by_range(resolved, [
+            ("0–5%", 0.0, 0.05), ("5–10%", 0.05, 0.10),
+            ("10–15%", 0.10, 0.15), ("15–20%", 0.15, 0.20),
+            ("20%+", 0.20, 1.0)], key=lambda b: b.edge)
+
+    def _calibration(self, resolved: list[Bet]) -> list[dict]:
+        """KI-Wahrscheinlichkeit vs tatsächliche Win-Rate (10%-Buckets)."""
+        buckets: dict[str, list[Bet]] = defaultdict(list)
+        for b in resolved:
+            bk = max(0, min(90, int(b.ml_prob * 10) * 10))
+            buckets[f"{bk}–{bk + 10}%"].append(b)
+        out = []
+        for label in sorted(buckets):
+            g = buckets[label]
+            w = sum(1 for b in g if b.is_won)
+            avg_ml = sum(b.ml_prob for b in g) / len(g)
+            actual = w / len(g)
+            out.append({
+                "range": label, "bets": len(g), "won": w,
+                "predicted_wr": round(avg_ml, 4),
+                "actual_wr": round(actual, 4),
+                "diff": round(actual - avg_ml, 4)})
+        return out
+
+    def _expected_vs_actual(self, resolved: list[Bet]) -> dict:
+        exp = sum(b.ev * b.stake for b in resolved)
+        act = sum(b.profit for b in resolved)
+        stk = sum(b.stake for b in resolved)
+        return {
+            "expected_profit": round(exp, 2),
+            "actual_profit": round(act, 2),
+            "difference": round(act - exp, 2),
+            "expected_roi": round(exp / stk * 100, 2) if stk else 0,
+            "actual_roi": round(act / stk * 100, 2) if stk else 0}
+
+    def _weekly(self, resolved: list[Bet]) -> list[dict]:
+        weeks: dict[str, dict] = defaultdict(
+            lambda: {"bets": 0, "won": 0, "profit": 0.0, "staked": 0.0})
+        for b in resolved:
+            try:
+                dt = datetime.fromisoformat(b.placed_at)
+                ic = dt.isocalendar()
+                wk = f"{ic.year}-W{ic.week:02d}"
+            except (ValueError, AttributeError):
+                wk = "?"
+            w = weeks[wk]
+            w["bets"] += 1; w["won"] += int(b.is_won)
+            w["profit"] += b.profit; w["staked"] += b.stake
+        out, cum = [], 0.0
+        for wk in sorted(weeks):
+            w = weeks[wk]; cum += w["profit"]
+            out.append({
+                "week": wk, "bets": w["bets"], "won": w["won"],
+                "lost": w["bets"] - w["won"],
+                "profit": round(w["profit"], 2),
+                "cumulative": round(cum, 2),
+                "roi": round(w["profit"] / w["staked"] * 100, 2) if w["staked"] else 0})
+        return out
+
+    def _kelly(self, resolved: list[Bet]) -> dict:
+        """Kelly-Criterion-Simulation: Was wäre mit optimalem Einsatz passiert?"""
+        entries = []
+        bankroll = 1000.0
+        cum_kelly = 0.0
+        cum_flat = 0.0
+
+        for b in resolved:
+            p, odds = b.ml_prob, b.odds
+            if odds <= 1.0:
+                kf = 0.0
+            else:
+                kf = max(0.0, min(0.25, (p * (odds - 1) - (1 - p)) / (odds - 1)))
+            ks = round(bankroll * kf, 2)
+            kp = ks * (odds - 1) if b.is_won else -ks
+            cum_kelly += kp
+            bankroll += kp
+            cum_flat += b.profit
+
+            entries.append({
+                "bet_id": b.id, "team": b.bet_on, "odds": b.odds,
+                "ml_prob": round(b.ml_prob, 3),
+                "kelly_frac": round(kf, 4), "kelly_stake": ks,
+                "flat_stake": b.stake,
+                "kelly_profit": round(kp, 2), "flat_profit": round(b.profit, 2),
+                "cum_kelly": round(cum_kelly, 2), "cum_flat": round(cum_flat, 2),
+                "bankroll": round(bankroll, 2), "won": b.is_won})
+
+        return {
+            "start_bankroll": 1000.0,
+            "end_bankroll": round(bankroll, 2),
+            "kelly_total_profit": round(cum_kelly, 2),
+            "flat_total_profit": round(cum_flat, 2),
+            "entries": entries}
+
+    # ── Interne Helfer ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _group_by_range(bets, ranges, key) -> list[dict]:
+        out = []
+        for label, lo, hi in ranges:
+            g = [b for b in bets if lo <= key(b) < hi]
+            if not g:
+                out.append({"range": label, "bets": 0, "won": 0, "lost": 0,
+                            "win_rate": 0, "profit": 0, "roi": 0, "avg_odds": 0})
+                continue
+            w = sum(1 for b in g if b.is_won)
+            p = sum(b.profit for b in g)
+            s = sum(b.stake for b in g)
+            out.append({
+                "range": label, "bets": len(g), "won": w, "lost": len(g) - w,
+                "win_rate": round(w / len(g), 4), "profit": round(p, 2),
+                "roi": round(p / s * 100, 2) if s else 0,
+                "avg_odds": round(sum(b.odds for b in g) / len(g), 2)})
+        return out
+
+    def _all_bets_sorted(self) -> list[Bet]:
+        with self._connect() as c:
+            rows = c.execute("SELECT * FROM bets ORDER BY placed_at ASC").fetchall()
+        return [self._row_to_bet(r) for r in rows]
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")  # Besser für Raspberry Pi
+        conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
     def _init_db(self) -> None:
-        """Erstellt die Tabelle falls noch nicht vorhanden."""
-        with self._connect() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS bets (
-                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                    home_team     TEXT NOT NULL,
-                    away_team     TEXT NOT NULL,
-                    bet_on        TEXT NOT NULL,
-                    bet_side      TEXT NOT NULL,
-                    odds          REAL NOT NULL,
-                    stake         REAL NOT NULL DEFAULT 10.0,
-                    ml_prob       REAL NOT NULL,
-                    odds_prob     REAL NOT NULL,
-                    edge          REAL NOT NULL,
-                    ev            REAL NOT NULL,
-                    bet_rating    TEXT NOT NULL,
-                    status        TEXT NOT NULL DEFAULT 'open',
-                    actual_winner TEXT,
-                    payout        REAL NOT NULL DEFAULT 0,
-                    profit        REAL NOT NULL DEFAULT 0,
-                    placed_at     TEXT NOT NULL,
-                    resolved_at   TEXT
-                )
-            """)
-            conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_bets_status ON bets(status)
-            """)
+        with self._connect() as c:
+            c.execute("""CREATE TABLE IF NOT EXISTS bets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                home_team TEXT NOT NULL, away_team TEXT NOT NULL,
+                bet_on TEXT NOT NULL, bet_side TEXT NOT NULL,
+                odds REAL NOT NULL, stake REAL NOT NULL DEFAULT 10.0,
+                ml_prob REAL NOT NULL, odds_prob REAL NOT NULL,
+                edge REAL NOT NULL, ev REAL NOT NULL,
+                bet_rating TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                actual_winner TEXT, payout REAL NOT NULL DEFAULT 0,
+                profit REAL NOT NULL DEFAULT 0,
+                placed_at TEXT NOT NULL, resolved_at TEXT)""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_bets_status ON bets(status)")
 
     @staticmethod
     def _row_to_bet(row: sqlite3.Row) -> Bet:
-        return Bet(
-            id=row["id"],
-            home_team=row["home_team"],
-            away_team=row["away_team"],
-            bet_on=row["bet_on"],
-            bet_side=row["bet_side"],
-            odds=row["odds"],
-            stake=row["stake"],
-            ml_prob=row["ml_prob"],
-            odds_prob=row["odds_prob"],
-            edge=row["edge"],
-            ev=row["ev"],
-            bet_rating=row["bet_rating"],
-            status=row["status"],
-            actual_winner=row["actual_winner"],
-            payout=row["payout"],
-            profit=row["profit"],
-            placed_at=row["placed_at"],
-            resolved_at=row["resolved_at"],
-        )
+        return Bet(**{k: row[k] for k in (
+            "id", "home_team", "away_team", "bet_on", "bet_side", "odds",
+            "stake", "ml_prob", "odds_prob", "edge", "ev", "bet_rating",
+            "status", "actual_winner", "payout", "profit", "placed_at", "resolved_at")})
 
     @staticmethod
     def _calc_streaks(resolved: list[Bet]) -> tuple[int, int]:
-        """Berechnet beste Gewinnserie und aktuelle Serie."""
         if not resolved:
             return 0, 0
-
-        best_win = 0
-        current = 0
-
-        for bet in resolved:
-            if bet.status == "won":
-                current = current + 1 if current > 0 else 1
-            else:
-                current = current - 1 if current < 0 else -1
-            if current > best_win:
-                best_win = current
-
-        return best_win, current
+        best, cur = 0, 0
+        for b in resolved:
+            cur = (cur + 1 if cur > 0 else 1) if b.is_won else (cur - 1 if cur < 0 else -1)
+            if cur > best:
+                best = cur
+        return best, cur
