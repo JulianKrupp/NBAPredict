@@ -32,6 +32,9 @@ from src.ml.model_trainer import NBAModelTrainer
 from src.prediction.predictor import GamePredictor
 from src.utils.config import Config
 from src.utils.logger import setup_logger
+from src.betting.tracker import BettingTracker
+from src.betting.resolver import BetResolver
+
 
 # ── App-Setup ─────────────────────────────────────────────────────────────────
 app = Flask(__name__, static_folder="static")
@@ -45,6 +48,8 @@ nba_client   = NBAApiClient(config)
 odds_client  = OddsApiClient(config)
 ml_predictor = MLPredictor(config)
 comparison   = OddsVsMLComparison(config)
+bet_tracker  = BettingTracker()
+bet_resolver = BetResolver(config, bet_tracker)
 
 # Training-Status (für den Fortschrittsbalken im Frontend)
 _training_status: dict = {"running": False, "step": "", "done": False, "error": ""}
@@ -208,19 +213,30 @@ def compare():
             entries = comparison.run_comparison()
 
         return jsonify([{
-            "home":        e.home_team,
-            "away":        e.away_team,
-            "ml_home":     round(e.ml_home_prob, 3),
-            "ml_away":     round(e.ml_away_prob, 3),
-            "ml_winner":   e.ml_winner,
-            "odds_home":   round(e.odds_home_prob, 3),
-            "odds_away":   round(e.odds_away_prob, 3),
+            "home": e.home_team,
+            "away": e.away_team,
+            "ml_home": round(e.ml_home_prob, 3),
+            "ml_away": round(e.ml_away_prob, 3),
+            "ml_winner": e.ml_winner,
+            "odds_home": round(e.odds_home_prob, 3),
+            "odds_away": round(e.odds_away_prob, 3),
             "odds_winner": e.odds_winner,
             "odds_home_raw": e.odds_home_raw,
             "odds_away_raw": e.odds_away_raw,
-            "diff":        round(e.prob_difference, 3),
-            "agree":       e.methods_agree,
-            "indicator":   e.value_bet_indicator,
+            "diff": round(e.prob_difference, 3),
+            "agree": e.methods_agree,
+            "indicator": e.value_bet_indicator,
+            # ── Wettempfehlung ──
+            "bet_team": e.bet_team,
+            "bet_side": e.bet_side,
+            "bet_rating": e.bet_rating,
+            "bet_rating_label": e.bet_rating_label,
+            "bet_ev": round(e.best_ev, 4),
+            "bet_edge": round(e.edge, 4),
+            "bet_confidence": e.bet_confidence,
+            "bet_odds_raw": round(e.bet_odds_raw, 2),
+            "bet_ml_prob": round(e.bet_ml_prob, 3),
+            "bet_odds_prob": round(e.bet_odds_prob, 3),
         } for e in entries])
     except Exception as exc:
         logger.error("Compare-Fehler: %s", exc)
@@ -284,6 +300,88 @@ def train():
 @app.route("/api/train/status")
 def train_status():
     return jsonify(_training_status)
+
+
+@app.route("/api/bets", methods=["GET"])
+def get_bets():
+    status = request.args.get("status")
+    limit = request.args.get("limit", 100, type=int)
+    try:
+        bets = bet_tracker.get_all_bets(limit=limit, status=status)
+        return jsonify([{
+            "id": b.id, "home_team": b.home_team, "away_team": b.away_team,
+            "bet_on": b.bet_on, "bet_side": b.bet_side,
+            "odds": b.odds, "stake": b.stake,
+            "ml_prob": round(b.ml_prob, 3), "odds_prob": round(b.odds_prob, 3),
+            "edge": round(b.edge, 4), "ev": round(b.ev, 4),
+            "bet_rating": b.bet_rating, "status": b.status,
+            "actual_winner": b.actual_winner,
+            "payout": round(b.payout, 2), "profit": round(b.profit, 2),
+            "placed_at": b.placed_at, "resolved_at": b.resolved_at,
+        } for b in bets])
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/bets", methods=["POST"])
+def place_bet():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "JSON-Body fehlt"}), 400
+    required = ["home_team", "away_team", "bet_on", "bet_side", "odds",
+                 "ml_prob", "odds_prob", "edge", "ev", "bet_rating"]
+    missing = [f for f in required if f not in data]
+    if missing:
+        return jsonify({"error": f"Felder fehlen: {', '.join(missing)}"}), 400
+    try:
+        bet = bet_tracker.place_bet(
+            home_team=data["home_team"], away_team=data["away_team"],
+            bet_on=data["bet_on"], bet_side=data["bet_side"],
+            odds=float(data["odds"]), ml_prob=float(data["ml_prob"]),
+            odds_prob=float(data["odds_prob"]), edge=float(data["edge"]),
+            ev=float(data["ev"]), bet_rating=data["bet_rating"],
+            stake=float(data.get("stake", 10.0)),
+        )
+        return jsonify({"success": True, "bet_id": bet.id})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/bets/<int:bet_id>", methods=["DELETE"])
+def delete_bet(bet_id: int):
+    if not bet_tracker.delete_bet(bet_id):
+        return jsonify({"error": "Nicht gefunden"}), 404
+    return jsonify({"success": True})
+
+
+@app.route("/api/bets/stats")
+def bet_stats():
+    return jsonify(bet_tracker.get_stats().to_dict())
+
+
+@app.route("/api/bets/history")
+def bet_history():
+    return jsonify(bet_tracker.get_profit_history())
+
+
+@app.route("/api/bets/resolve", methods=["POST"])
+def resolve_bets():
+    return jsonify(bet_resolver.resolve_all_open())
+
+
+@app.route("/api/bets/reset", methods=["POST"])
+def reset_bets():
+    return jsonify({"success": True, "deleted": bet_tracker.reset()})
+
+
+@app.route("/api/bets/analytics")
+def bet_analytics():
+    """Umfassende Effektivitäts-Analyse aller Wetten."""
+    try:
+        return jsonify(bet_tracker.get_analytics())
+    except Exception as exc:
+        logger.error("Analytics-Fehler: %s", exc)
+        return jsonify({"error": str(exc)}), 500
 
 
 # ── Start ─────────────────────────────────────────────────────────────────────
