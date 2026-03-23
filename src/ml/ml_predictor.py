@@ -292,7 +292,7 @@ class MLPredictor:
             losses=team.losses,
             avg_pts_scored=team.avg_points_scored,
             avg_pts_allowed=team.avg_points_allowed,
-            recent_results=team.recent_game_results if team.has_recent_form_data else None,
+            recent_game_results=team.recent_game_results if team.has_recent_form_data else None,
         )
 
     def _get_feature_contributions(self) -> dict[str, float]:
