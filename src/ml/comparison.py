@@ -103,6 +103,8 @@ class OddsVsMLComparison:
 
         print(f"{'='*80}\n")
 
+    # ── Private Methoden ─────────────────────────────────────────────────
+
     def _compare_game(self, odds: GameOdds) -> ComparisonEntry | None:
         home_team = self.nba_client.get_team_stats(odds.home_team)
         away_team = self.nba_client.get_team_stats(odds.away_team)
@@ -111,10 +113,10 @@ class OddsVsMLComparison:
 
         result = self.ml_predictor.predict(home_team, away_team, odds)
 
-        total = odds.implied_home_probability + odds.implied_away_probability
-        odds_home_norm = odds.implied_home_probability / total if total > 0 else 0.5
-        odds_away_norm = 1.0 - odds_home_norm
-        odds_winner    = "home" if odds_home_norm >= 0.5 else "away"
+        odds_home_norm, odds_away_norm = self._normalize_odds(
+            odds.odds_home, odds.odds_away,
+        )
+        odds_winner = "home" if odds_home_norm >= 0.5 else "away"
 
         return ComparisonEntry(
             home_team=odds.home_team,
@@ -129,3 +131,24 @@ class OddsVsMLComparison:
             odds_away_raw=odds.odds_away,
             prob_difference=abs(result.ml_home_win_probability - odds_home_norm),
         )
+
+    @staticmethod
+    def _normalize_odds(odds_home: float, odds_away: float) -> tuple[float, float]:
+        """
+        Normiert Dezimalquoten zu Wahrscheinlichkeiten (Vig-bereinigt).
+
+        Args:
+            odds_home: Dezimalquote Heim.
+            odds_away: Dezimalquote Auswärts.
+
+        Returns:
+            Tupel (home_probability, away_probability) mit Summe = 1.0.
+        """
+        if odds_home <= 0 or odds_away <= 0:
+            return 0.5, 0.5
+
+        raw_home = 1.0 / odds_home
+        raw_away = 1.0 / odds_away
+        total = raw_home + raw_away  # > 1.0 wegen Vig (Buchmachergewinn)
+
+        return raw_home / total, raw_away / total
