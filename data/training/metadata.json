@@ -1,11 +1,15 @@
 {
-  "total_samples": 200,
+  "total_samples": 7514,
   "seasons": [
+    2019,
+    2020,
+    2021,
+    2022,
     2023,
     2024
   ],
-  "home_win_rate": 0.52,
-  "feature_count": 43,
+  "home_win_rate": 0.5528347085440511,
+  "feature_count": 46,
   "features": [
     "home_win_rate",
     "home_point_diff",
@@ -49,6 +53,9 @@
     "diff_last_5",
     "diff_streak",
     "diff_fatigue",
+    "home_elo",
+    "away_elo",
+    "diff_elo",
     "odds_implied_home_prob"
   ],
   "data_path": "data\\training\\training_data.csv",
