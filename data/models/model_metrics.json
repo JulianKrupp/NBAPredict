@@ -1,53 +1,53 @@
 {
-  "model_name": "LogisticRegression",
-  "accuracy": 0.85,
-  "roc_auc": 0.9599,
-  "brier_score": 0.0883,
-  "cv_accuracy_mean": 0.7875,
-  "cv_accuracy_std": 0.0848,
-  "train_samples": 160,
-  "test_samples": 40,
+  "model_name": "RandomForest",
+  "accuracy": 1.0,
+  "roc_auc": 1.0,
+  "brier_score": 0.0413,
+  "cv_accuracy_mean": 1.0,
+  "cv_accuracy_std": 0.0,
+  "train_samples": 96,
+  "test_samples": 24,
   "feature_count": 43,
   "top_features": [
     {
-      "feature": "home_home_win_rate",
-      "importance": 1.4569
+      "feature": "diff_win_rate",
+      "importance": 0.4032
     },
     {
-      "feature": "away_away_win_rate",
-      "importance": 1.3938
-    },
-    {
-      "feature": "away_home_win_rate",
-      "importance": 0.4536
-    },
-    {
-      "feature": "away_form_rating",
-      "importance": 0.366
-    },
-    {
-      "feature": "home_form_rating",
-      "importance": 0.2688
-    },
-    {
-      "feature": "away_last_5_win_rate",
-      "importance": 0.1833
+      "feature": "away_current_streak",
+      "importance": 0.2082
     },
     {
       "feature": "away_win_rate",
-      "importance": 0.1833
+      "importance": 0.2068
     },
     {
-      "feature": "away_last_10_win_rate",
-      "importance": 0.1833
+      "feature": "diff_streak",
+      "importance": 0.057
     },
     {
-      "feature": "home_away_win_rate",
-      "importance": 0.1831
+      "feature": "home_net_rating",
+      "importance": 0.0519
     },
     {
-      "feature": "home_offensive_rating",
-      "importance": 0.0988
+      "feature": "away_net_rating",
+      "importance": 0.0374
+    },
+    {
+      "feature": "home_win_rate",
+      "importance": 0.0204
+    },
+    {
+      "feature": "home_current_streak",
+      "importance": 0.015
+    },
+    {
+      "feature": "diff_fatigue",
+      "importance": 0.0
+    },
+    {
+      "feature": "diff_net_rating",
+      "importance": 0.0
     }
   ]
 }
