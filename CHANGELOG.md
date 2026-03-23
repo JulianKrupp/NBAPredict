@@ -5,6 +5,253 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ---
 
+## [0.4.0] – Wettempfehlung, Wett-Tracker & Analyse-Dashboard
+
+Drei neue Features: Value-Bet-Empfehlungen auf der Compare-Seite,
+ein virtueller Wett-Tracker mit SQLite-Speicherung und ein
+umfassendes Analyse-Dashboard zur Bewertung der Modell-Effektivität.
+
+### Geänderte Dateien
+
+| Datei | Änderung |
+|-------|----------|
+| `src/ml/comparison.py` | Wettempfehlungs-Properties auf `ComparisonEntry` |
+| `src/betting/tracker.py` | Virtueller Wett-Tracker mit SQLite (NEU) |
+| `src/betting/resolver.py` | Auto-Auflösung offener Wetten (NEU) |
+| `src/betting/__init__.py` | Modul-Exporte (NEU) |
+| `scripts/resolve_bets.py` | Cron-Job-Skript für Raspberry Pi (NEU) |
+| `web/server.py` | Neue API-Routen für Wetten + Analytics, erweiterte Compare-API |
+| `web/static/index.html` | Aufgeteilt in HTML/CSS/JS, neue Bets-Seite |
+| `web/static/style.css` | Ausgelagert aus index.html, inkl. Bet-Styles (NEU) |
+| `web/static/app.js` | Ausgelagert aus index.html, inkl. Bet-Logik (NEU) |
+| `src/api/nba_api_client.py` | Clippers-Alias-Fix, robusteres Team-Matching |
+
+---
+
+### Hinzugefügt
+
+#### Wettempfehlung auf der Compare-Seite
+
+Neue Properties auf `ComparisonEntry` in `src/ml/comparison.py`:
+
+| Property | Typ | Beschreibung |
+|----------|-----|--------------|
+| `ev_home` / `ev_away` | `float` | Expected Value: `(KI-Prob × Quote) - 1` |
+| `best_ev` | `float` | Höchster EV der beiden Seiten |
+| `bet_team` | `str` | Name des Teams mit bestem EV |
+| `bet_side` | `str` | `"home"` oder `"away"` |
+| `bet_odds_raw` | `float` | Dezimalquote der empfohlenen Seite |
+| `bet_ml_prob` | `float` | KI-Wahrscheinlichkeit der empfohlenen Seite |
+| `bet_odds_prob` | `float` | Quoten-Wahrscheinlichkeit der empfohlenen Seite |
+| `edge` | `float` | `bet_ml_prob - bet_odds_prob` |
+| `bet_rating` | `str` | `"strong"` / `"good"` / `"slight"` / `"none"` |
+| `bet_rating_label` | `str` | Menschenlesbares Label (z.B. "🔥 Stark empfohlen") |
+| `bet_confidence` | `int` | Score 0–100 basierend auf Edge + Methodenübereinstimmung |
+
+Bewertungsstufen:
+
+| Rating | Edge | Label |
+|--------|------|-------|
+| `strong` | ≥ 15% | 🔥 Stark empfohlen |
+| `good` | ≥ 8% | ✅ Empfohlen |
+| `slight` | ≥ 4% | 💡 Leicht positiv |
+| `none` | < 4% | ⏸️ Kein Value |
+
+#### Virtueller Wett-Tracker
+
+Neues Modul `src/betting/` mit SQLite-Datenbank (`data/betting/bets.db`).
+
+**`src/betting/tracker.py` – BettingTracker:**
+
+| Methode | Beschreibung |
+|---------|--------------|
+| `place_bet()` | Virtuelle Wette platzieren (10 Einheiten Standard) |
+| `resolve_bet()` | Wette als gewonnen/verloren auflösen |
+| `get_stats()` | Aggregierte Statistiken (W/L, ROI, Serien, Rating-Aufschlüsselung) |
+| `get_profit_history()` | Kumulativer Profitverlauf für Charts |
+| `get_analytics()` | Umfassende Effektivitäts-Analyse (siehe unten) |
+| `get_all_bets()` | Alle Wetten mit optionalem Status-Filter |
+| `delete_bet()` / `reset()` | Einzelne/alle Wetten löschen |
+
+**`src/betting/resolver.py` – BetResolver:**
+
+| Methode | Beschreibung |
+|---------|--------------|
+| `resolve_all_open()` | Prüft Spiele der letzten 3 Tage via BallDontLie-API und löst offene Wetten auf |
+
+**`scripts/resolve_bets.py` – Cron-Job:**
+
+Standalone-Skript für den Raspberry Pi. Einrichten per `crontab -e`:
+
+```cron
+0 9 * * * cd /home/pi/nba-tracker && .venv/bin/python scripts/resolve_bets.py >> logs/resolve.log 2>&1
+```
+
+SQLite-Tabelle `bets`:
+
+| Spalte | Typ | Beschreibung |
+|--------|-----|--------------|
+| `id` | INTEGER PK | Auto-Increment |
+| `home_team` / `away_team` | TEXT | Teamnamen |
+| `bet_on` | TEXT | Gewettetes Team |
+| `bet_side` | TEXT | `"home"` / `"away"` |
+| `odds` | REAL | Dezimalquote zum Wettzeitpunkt |
+| `stake` | REAL | Virtueller Einsatz (Default: 10.0) |
+| `ml_prob` / `odds_prob` | REAL | KI- und Quoten-Wahrscheinlichkeit |
+| `edge` / `ev` | REAL | Edge und Expected Value |
+| `bet_rating` | TEXT | Rating-Stufe |
+| `status` | TEXT | `"open"` / `"won"` / `"lost"` |
+| `actual_winner` | TEXT | Tatsächlicher Gewinner (nach Auflösung) |
+| `payout` / `profit` | REAL | Auszahlung und Gewinn/Verlust |
+| `placed_at` / `resolved_at` | TEXT | ISO-Zeitstempel |
+
+WAL-Modus aktiviert für bessere Performance auf dem Raspberry Pi.
+
+#### Analyse-Dashboard (`get_analytics()`)
+
+Umfassende Effektivitäts-Analyse über alle aufgelösten Wetten:
+
+| Dimension | Beschreibung |
+|-----------|--------------|
+| `profit_history` | Kumulativer Profitverlauf (Chartdaten) |
+| `by_rating` | Bilanz pro Empfehlungsstufe (strong/good/slight/none) mit Win%, ROI, Ø Quote, Ø Edge |
+| `by_team` | Profitabelste Teams (Top 15, sortiert nach Profit) |
+| `by_side` | Heim- vs Auswärts-Wetten |
+| `by_odds_range` | Gruppiert nach Quotenbereich (1.0–1.5, 1.5–2.0, 2.0–2.5, 2.5–3.5, 3.5+) |
+| `by_edge_range` | Gruppiert nach Edge-Bereich (0–5%, 5–10%, 10–15%, 15–20%, 20%+) |
+| `calibration` | KI-Wahrscheinlichkeit vs tatsächliche Win-Rate in 10%-Buckets |
+| `expected_vs_actual` | Erwarteter Profit (Summe EV) vs tatsächlicher Profit |
+| `weekly` | Wöchentlicher Verlauf mit kumulativem Stand |
+| `kelly_analysis` | Kelly-Criterion-Simulation: optimaler Einsatz vs Flat-Stake |
+| `avg_profit_won` / `avg_profit_lost` | Ø Gewinn bzw. Verlust pro Wette |
+
+**Kalibrierungs-Analyse:** Zeigt ob das KI-Modell gut kalibriert ist.
+Beispiel: Wenn die KI "70% Chance" sagt, sollten ~70% der Wetten gewonnen werden.
+Positiver Diff-Wert = Modell unterschätzt, Negativer = Modell überschätzt.
+
+**Kelly-Criterion-Simulation:** Simuliert was passiert wäre, wenn statt
+eines festen Einsatzes (10 Einheiten) der mathematisch optimale
+Kelly-Einsatz verwendet worden wäre. Start-Bankroll: 1000 Einheiten.
+Kelly-Fraction gecappt bei 25% pro Wette.
+
+#### Neue API-Endpunkte in `web/server.py`
+
+| Methode | Pfad | Beschreibung |
+|---------|------|--------------|
+| GET | `/api/bets` | Alle Wetten (optional `?status=open`) |
+| POST | `/api/bets` | Neue Wette platzieren |
+| DELETE | `/api/bets/<id>` | Wette löschen |
+| GET | `/api/bets/stats` | Aggregierte Statistiken |
+| GET | `/api/bets/history` | Kumulativer Profitverlauf |
+| GET | `/api/bets/analytics` | Umfassende Effektivitäts-Analyse |
+| POST | `/api/bets/resolve` | Offene Wetten automatisch auflösen |
+| POST | `/api/bets/reset` | ALLE Wetten löschen |
+
+Erweiterte Compare-API (`/api/compare`) mit 10 neuen Feldern:
+`bet_team`, `bet_side`, `bet_rating`, `bet_rating_label`, `bet_ev`,
+`bet_edge`, `bet_confidence`, `bet_odds_raw`, `bet_ml_prob`, `bet_odds_prob`.
+
+#### Frontend-Aufspaltung
+
+`web/static/index.html` wurde in drei Dateien aufgeteilt:
+
+| Datei | Zeilen | Inhalt |
+|-------|--------|--------|
+| `index.html` | ~195 | Reines HTML-Markup, lädt `style.css` + `app.js` |
+| `style.css` | ~410 | Alle CSS-Regeln inkl. Bet-Recommendation + Bet-Tracker |
+| `app.js` | ~980 | Gesamte JS-Logik inkl. Compare mit Wette-Button + Analyse-Tab |
+
+Referenzen in index.html nutzen `/static/`-Prefix für Flask:
+```html
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js"></script>
+```
+
+Neue Seite **💰 Wetten** mit 4 Tabs:
+
+| Tab | Beschreibung |
+|-----|--------------|
+| Dashboard | Bilanz, ROI, Serien, Profit nach Rating-Stufe |
+| Offen | Alle offenen Wetten mit Lösch-Button |
+| Historie | Alle Wetten chronologisch |
+| Analyse | Vollständiges Effektivitäts-Dashboard (11 Sektionen) |
+
+"Wette platzieren"-Button in jeder Compare-Karte (nur bei Rating ≠ "none").
+
+#### Raspberry-Pi-Deployment
+
+Systemd-Service-Konfiguration für dauerhaften Betrieb:
+
+```ini
+[Unit]
+Description=NBA Tracker Web-Server
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/nba-tracker
+ExecStart=/home/pi/nba-tracker/.venv/bin/python web/server.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+---
+
+### Behoben
+
+#### LA Clippers Team-Name-Mismatch
+
+**Problem:** BallDontLie-API führt das Team seit Saison 2024/25 als
+"LA Clippers", die Odds API sendet weiterhin "Los Angeles Clippers".
+Der Namensvergleich in `get_team_stats()` findet keinen Match.
+
+**Lösung in `src/api/nba_api_client.py`:**
+
+1. Neue Aliase in `TEAM_NAME_ALIASES`:
+```python
+"clippers":              "LA Clippers",
+"los angeles clippers":  "LA Clippers",
+"la clippers":           "LA Clippers",
+```
+
+2. Bidirektionaler Vergleich in `get_team_stats()`:
+```python
+# ALT (nur einseitig):
+if resolved_name.lower() in team.name.lower():
+
+# NEU (bidirektional):
+if resolved_lower in name_lower or name_lower in resolved_lower:
+```
+
+---
+
+### Neue Projektstruktur (ergänzt)
+
+```
+src/betting/                    # NEU
+├── __init__.py
+├── tracker.py                  # SQLite-Wett-Tracker + Analyse
+└── resolver.py                 # Auto-Auflösung via API
+
+scripts/                        # NEU
+└── resolve_bets.py             # Cron-Job für Raspberry Pi
+
+data/betting/                   # NEU (wird automatisch erstellt)
+└── bets.db                     # SQLite-Datenbank
+
+web/static/
+├── index.html                  # GEÄNDERT: Nur noch HTML-Markup
+├── style.css                   # NEU: Ausgelagerte CSS-Regeln
+└── app.js                      # NEU: Ausgelagerte JS-Logik
+```
+
+---
+
+---
+
 ## [Unreleased] – Teambewertung & ML-Pipeline v2
 
 Komplette Überarbeitung beider Vorhersagepfade (regelbasiert + ML-Modell).
