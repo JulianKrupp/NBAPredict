@@ -1,13 +1,18 @@
 """
-Trainingsdaten-Kollektor für das NBA ML-Modell.
+Trainingsdaten-Kollektor für das NBA ML-Modell (v2).
 
 Kombiniert Daten aus drei Quellen:
   1. BallDontLie API  – historische Spielergebnisse & Team-Standings
-  2. RapidAPI NBA     – erweiterte Team-Statistiken (Advanced Stats)
+  2. nba_api          – erweiterte Team-Statistiken (Advanced Stats)
   3. The Odds API     – historische Wettquoten als zusätzliches Feature
 
 Jede Trainingszeile repräsentiert ein abgeschlossenes Spiel mit
 Feature-Vektor (Teamstats zum Spielzeitpunkt) und Label (Heimsieg = 1).
+
+Änderungen v2:
+  - 10 neue Features: streak, fatigue, form_rating, games_last_7 (je Team)
+    + diff_streak, diff_fatigue (Differenz-Features)
+  - Feature-Anzahl: 33 → 43
 """
 
 from __future__ import annotations
@@ -67,6 +72,11 @@ class TrainingSample:
     home_last_5_win_rate: float
     home_last_10_win_rate: float
     home_days_rest: int
+    # NEU v2:
+    home_current_streak: int        # +N Siege, -N Niederlagen in Folge
+    home_fatigue_score: float       # 0.0 (ausgeruht) – 1.0 (belastet)
+    home_form_rating: float         # Gewichtete Formkurve (L3/L5/L10)
+    home_games_last_7_days: int     # Spieldichte letzte Woche
 
     # ── Auswärtsteam-Features ─────────────────────────────────────────
     away_win_rate: float
@@ -83,12 +93,20 @@ class TrainingSample:
     away_last_5_win_rate: float
     away_last_10_win_rate: float
     away_days_rest: int
+    # NEU v2:
+    away_current_streak: int
+    away_fatigue_score: float
+    away_form_rating: float
+    away_games_last_7_days: int
 
     # ── Differenz-Features (Heimteam minus Auswärtsteam) ─────────────
     diff_win_rate: float
     diff_point_diff: float
     diff_net_rating: float
     diff_last_5: float
+    # NEU v2:
+    diff_streak: int                # home_streak - away_streak
+    diff_fatigue: float             # home_fatigue - away_fatigue
 
     # ── Wettquoten-Feature (optional, 0.5 wenn nicht verfügbar) ──────
     odds_implied_home_prob: float
@@ -99,12 +117,14 @@ class TrainingSample:
     @classmethod
     def get_feature_columns(cls) -> list[str]:
         """Gibt die Namen aller Feature-Spalten zurück (ohne Metadaten und Label)."""
-        all_fields = list(asdict(cls(
-            0, "", "", "", 0, 0,
-            0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-            0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-            0,0,0,0,0,0
-        )).keys())
+        # Dummy-Instanz mit allen Nullen erzeugen
+        field_count = len(cls.__dataclass_fields__) - 7  # 7 Meta+Label Felder
+        dummy_args = [0] * 6  # Metadaten (game_id..away_score)
+        dummy_args = [0, "", "", "", 0, 0]  # Typen korrekt
+        dummy_args += [0] * (len(cls.__dataclass_fields__) - 6 - 1)  # Features
+        dummy_args += [0]  # Label
+
+        all_fields = list(cls.__dataclass_fields__.keys())
         meta_fields = {"game_id", "game_date", "home_team", "away_team",
                        "home_score", "away_score", "home_team_won"}
         return [f for f in all_fields if f not in meta_fields]
@@ -132,46 +152,43 @@ class TrainingDataCollector:
         output_path: Path = TRAINING_DATA_PATH,
     ) -> int:
         """
-        Hauptmethode: Sammelt Trainingsdaten für die angegebenen Saisons.
-
-        Args:
-            seasons:     Liste von NBA-Saisons (z.B. [2022, 2023, 2024]).
-            max_games:   Maximale Anzahl zu sammelnder Spiele.
-            output_path: Pfad für die CSV-Ausgabedatei.
+        Hauptmethode: Sammelt Trainingsdaten und speichert sie als CSV.
 
         Returns:
-            Anzahl der gesammelten Trainingssamples.
+            Anzahl der gesammelten Samples.
         """
-        seasons = seasons or [2023, 2024]
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if seasons is None:
+            seasons = [2023, 2024]
 
-        self.logger.info(
-            "Starte Datensammlung: Saisons=%s, max_games=%d", seasons, max_games
-        )
         print(f"\n{'='*60}")
-        print(f"  📊 Trainingsdaten-Sammlung gestartet")
+        print(f"  Trainingsdaten sammeln")
         print(f"  Saisons: {seasons} | Max. Spiele: {max_games}")
         print(f"{'='*60}")
 
-        # Schritt 1: Team-Statistiken für alle Saisons laden
-        print("\n  [1/4] Lade Team-Statistiken aus BallDontLie API...")
+        # Schritt 1: Spiele laden
+        print("\n  [1/4] Lade Spielergebnisse (BallDontLie)...")
+        all_games = self._fetch_historical_games(seasons, max_games)
+        if not all_games:
+            print("  Fehler: Keine Spiele geladen.")
+            return 0
+        print(f"        → {len(all_games)} Spiele geladen")
+
+        # Schritt 2: Team-Statistiken berechnen
+        print("\n  [2/4] Berechne Team-Statistiken pro Saison...")
         all_team_stats: dict[int, dict[str, Team]] = {}
         for season in seasons:
-            standings = self.nba_client.get_standings(season)
-            all_team_stats[season] = {t.name: t for t in standings}
-            print(f"        → {len(standings)} Teams für Saison {season} geladen")
+            season_games = [g for g in all_games if g.season == season]
+            if season_games:
+                teams = self.nba_client._calculate_standings_from_games(season_games, season)
+                all_team_stats[season] = teams
+                print(f"        Saison {season}: {len(teams)} Teams")
 
-        # Schritt 2: Historische Spiele laden
-        print("\n  [2/4] Lade historische Spielergebnisse...")
-        all_games = self._fetch_historical_games(seasons, max_games)
-        print(f"        → {len(all_games)} abgeschlossene Spiele gefunden")
-
-        if not all_games:
-            print("  ⚠️  Keine Spieldaten gefunden – prüfe API-Key.")
+        if not all_team_stats:
+            print("  Fehler: Keine Team-Statistiken berechnet.")
             return 0
 
         # Schritt 3: Advanced Stats berechnen/laden
-        print("\n  [3/4] Berechne Advanced Stats (RapidAPI + Fallback)...")
+        print("\n  [3/4] Berechne Advanced Stats...")
         advanced_stats_cache: dict[str, AdvancedTeamStats] = {}
         for season, teams in all_team_stats.items():
             for team_name, team in teams.items():
@@ -198,8 +215,8 @@ class TrainingDataCollector:
         self._save_to_csv(samples, output_path)
         self._save_metadata(samples, seasons, output_path)
 
-        print(f"\n  ✅ Gespeichert: {output_path}")
-        print(f"  ✅ Home-Win-Rate im Datensatz: "
+        print(f"\n  Gespeichert: {output_path}")
+        print(f"  Home-Win-Rate im Datensatz: "
               f"{sum(s.home_team_won for s in samples)/len(samples):.1%}")
         print(f"{'='*60}\n")
 
@@ -210,16 +227,7 @@ class TrainingDataCollector:
         seasons: list[int] | None = None,
         max_games: int = 500,
     ) -> list[TrainingSample]:
-        """
-        Sammelt Trainingsdaten und gibt sie als Liste zurück (für direktes Training).
-
-        Args:
-            seasons:   Saisons.
-            max_games: Max. Spielanzahl.
-
-        Returns:
-            Liste von TrainingSample-Objekten.
-        """
+        """Sammelt Trainingsdaten und gibt sie als Liste zurück."""
         saved = self.collect(seasons, max_games)
         if saved == 0:
             return []
@@ -229,12 +237,6 @@ class TrainingDataCollector:
     def load_from_csv(path: Path = TRAINING_DATA_PATH) -> list[TrainingSample]:
         """
         Lädt gespeicherte Trainingsdaten aus einer CSV-Datei.
-
-        Args:
-            path: Pfad zur CSV-Datei.
-
-        Returns:
-            Liste von TrainingSample-Objekten.
 
         Raises:
             FileNotFoundError: Wenn die Datei nicht existiert.
@@ -257,6 +259,7 @@ class TrainingDataCollector:
                         away_team=row["away_team"],
                         home_score=int(row["home_score"]),
                         away_score=int(row["away_score"]),
+                        # Heimteam
                         home_win_rate=float(row["home_win_rate"]),
                         home_point_diff=float(row["home_point_diff"]),
                         home_avg_pts_scored=float(row["home_avg_pts_scored"]),
@@ -271,6 +274,11 @@ class TrainingDataCollector:
                         home_last_5_win_rate=float(row["home_last_5_win_rate"]),
                         home_last_10_win_rate=float(row["home_last_10_win_rate"]),
                         home_days_rest=int(row["home_days_rest"]),
+                        home_current_streak=int(row["home_current_streak"]),
+                        home_fatigue_score=float(row["home_fatigue_score"]),
+                        home_form_rating=float(row["home_form_rating"]),
+                        home_games_last_7_days=int(row["home_games_last_7_days"]),
+                        # Auswärtsteam
                         away_win_rate=float(row["away_win_rate"]),
                         away_point_diff=float(row["away_point_diff"]),
                         away_avg_pts_scored=float(row["away_avg_pts_scored"]),
@@ -285,10 +293,18 @@ class TrainingDataCollector:
                         away_last_5_win_rate=float(row["away_last_5_win_rate"]),
                         away_last_10_win_rate=float(row["away_last_10_win_rate"]),
                         away_days_rest=int(row["away_days_rest"]),
+                        away_current_streak=int(row["away_current_streak"]),
+                        away_fatigue_score=float(row["away_fatigue_score"]),
+                        away_form_rating=float(row["away_form_rating"]),
+                        away_games_last_7_days=int(row["away_games_last_7_days"]),
+                        # Differenz
                         diff_win_rate=float(row["diff_win_rate"]),
                         diff_point_diff=float(row["diff_point_diff"]),
                         diff_net_rating=float(row["diff_net_rating"]),
                         diff_last_5=float(row["diff_last_5"]),
+                        diff_streak=int(row["diff_streak"]),
+                        diff_fatigue=float(row["diff_fatigue"]),
+                        # Odds + Label
                         odds_implied_home_prob=float(row["odds_implied_home_prob"]),
                         home_team_won=int(row["home_team_won"]),
                     )
@@ -343,13 +359,12 @@ class TrainingDataCollector:
                     except (KeyError, ValueError):
                         continue
 
-                # Pagination
                 meta = response.get("meta", {})
                 total_pages = meta.get("total_pages", 1)
                 if page >= total_pages:
                     break
                 page += 1
-                time.sleep(0.2)  # Rate-Limiting
+                time.sleep(0.2)
 
             except ApiError as exc:
                 self.logger.error("Fehler beim Laden Saison %d, Seite %d: %s",
@@ -383,7 +398,6 @@ class TrainingDataCollector:
         advanced_stats: dict[str, AdvancedTeamStats],
     ) -> TrainingSample | None:
         """Konvertiert ein einzelnes Spiel in ein TrainingSample."""
-        # Teamstatistiken der entsprechenden Saison suchen
         season_stats = team_stats.get(game.season, {})
 
         home_team = self._find_team(game.home_team, season_stats)
@@ -415,7 +429,7 @@ class TrainingDataCollector:
             away_team=game.away_team,
             home_score=game.home_score,
             away_score=game.away_score,
-            # Heimteam
+            # Heimteam – Basis
             home_win_rate=home_team.win_rate,
             home_point_diff=home_team.point_differential,
             home_avg_pts_scored=home_team.avg_points_scored,
@@ -430,7 +444,12 @@ class TrainingDataCollector:
             home_last_5_win_rate=home_adv.last_5_win_rate,
             home_last_10_win_rate=home_adv.last_10_win_rate,
             home_days_rest=home_adv.days_since_last_game,
-            # Auswärtsteam
+            # Heimteam – NEU v2
+            home_current_streak=home_team.current_streak,
+            home_fatigue_score=home_team.fatigue_score,
+            home_form_rating=home_team.form_rating,
+            home_games_last_7_days=home_team.games_last_7_days,
+            # Auswärtsteam – Basis
             away_win_rate=away_team.win_rate,
             away_point_diff=away_team.point_differential,
             away_avg_pts_scored=away_team.avg_points_scored,
@@ -445,49 +464,67 @@ class TrainingDataCollector:
             away_last_5_win_rate=away_adv.last_5_win_rate,
             away_last_10_win_rate=away_adv.last_10_win_rate,
             away_days_rest=away_adv.days_since_last_game,
+            # Auswärtsteam – NEU v2
+            away_current_streak=away_team.current_streak,
+            away_fatigue_score=away_team.fatigue_score,
+            away_form_rating=away_team.form_rating,
+            away_games_last_7_days=away_team.games_last_7_days,
             # Differenz-Features
             diff_win_rate=home_team.win_rate - away_team.win_rate,
             diff_point_diff=home_team.point_differential - away_team.point_differential,
             diff_net_rating=home_adv.net_rating - away_adv.net_rating,
             diff_last_5=home_adv.last_5_win_rate - away_adv.last_5_win_rate,
-            # Wettquoten (neutral, wenn keine historischen Quoten verfügbar)
-            odds_implied_home_prob=0.5,
-            # Label
+            # NEU v2
+            diff_streak=home_team.current_streak - away_team.current_streak,
+            diff_fatigue=home_team.fatigue_score - away_team.fatigue_score,
+            # Odds + Label
+            odds_implied_home_prob=0.5,  # Historische Quoten selten verfügbar
             home_team_won=1 if game.home_score > game.away_score else 0,
         )
 
-    @staticmethod
-    def _find_team(team_name: str, season_stats: dict[str, Team]) -> Team | None:
-        """Sucht ein Team im Statistik-Dictionary (fuzzy, case-insensitiv)."""
+    def _find_team(
+        self, team_name: str, season_stats: dict[str, Team]
+    ) -> Team | None:
+        """Findet ein Team per Name (exakt oder Teilmatch)."""
+        if team_name in season_stats:
+            return season_stats[team_name]
         name_lower = team_name.lower()
         for key, team in season_stats.items():
             if name_lower in key.lower() or key.lower() in name_lower:
                 return team
         return None
 
-    @staticmethod
-    def _save_to_csv(samples: list[TrainingSample], path: Path) -> None:
+    def _save_to_csv(
+        self, samples: list[TrainingSample], path: Path
+    ) -> None:
         """Speichert Trainingssamples als CSV."""
+        path.parent.mkdir(parents=True, exist_ok=True)
         if not samples:
             return
+        fieldnames = list(asdict(samples[0]).keys())
         with open(path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=list(asdict(samples[0]).keys()))
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerows(asdict(s) for s in samples)
+            for sample in samples:
+                writer.writerow(asdict(sample))
 
-    @staticmethod
     def _save_metadata(
-        samples: list[TrainingSample], seasons: list[int], data_path: Path
+        self,
+        samples: list[TrainingSample],
+        seasons: list[int],
+        data_path: Path,
     ) -> None:
-        """Speichert Metadaten zur Datensammlung als JSON."""
+        """Speichert Metadaten zum Trainingsdatensatz."""
+        features = TrainingSample.get_feature_columns()
         metadata = {
             "total_samples": len(samples),
             "seasons": seasons,
-            "home_win_rate": sum(s.home_team_won for s in samples) / len(samples) if samples else 0,
-            "feature_count": len(TrainingSample.get_feature_columns()),
-            "features": TrainingSample.get_feature_columns(),
+            "home_win_rate": sum(s.home_team_won for s in samples) / len(samples),
+            "feature_count": len(features),
+            "features": features,
             "data_path": str(data_path),
             "created_at": str(date.today()),
         }
+        METADATA_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(METADATA_PATH, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
