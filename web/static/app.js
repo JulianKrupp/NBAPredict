@@ -455,6 +455,7 @@ function showBetsTab(tab) {
   if (tab === 'dashboard') loadBetsDashboard();
   else if (tab === 'open') loadOpenBets();
   else if (tab === 'history') loadBetsHistory();
+  else if (tab === 'analytics') loadBetsAnalytics();
 }
 
 async function loadBetsDashboard() {
@@ -637,6 +638,223 @@ function confirmResetBets() {
   fetch(API + '/api/bets/reset', { method: 'POST' })
     .then(() => loadBetsDashboard())
     .catch(e => alert('Fehler: ' + e.message));
+}
+
+// ══════════════════════════════════════════════════════
+//  BETTING ANALYTICS
+// ══════════════════════════════════════════════════════
+
+async function loadBetsAnalytics() {
+  const el = document.getElementById('bets-tab-analytics');
+  el.innerHTML = loadingHtml('Berechne Analyse...');
+  try {
+    const a = await apiFetch('/api/bets/analytics');
+    if (a.empty) {
+      el.innerHTML = `<div class="empty-msg"><div class="empty-icon">📊</div><div class="empty-text">Noch keine aufgelösten Wetten für die Analyse</div></div>`;
+      return;
+    }
+
+    el.innerHTML = `
+      ${renderProfitChart(a.profit_history)}
+      ${renderExpectedVsActual(a.expected_vs_actual, a.avg_profit_won, a.avg_profit_lost)}
+      ${renderCalibration(a.calibration)}
+      ${renderByRating(a.by_rating)}
+      ${renderBySide(a.by_side)}
+      ${renderByOddsRange(a.by_odds_range)}
+      ${renderByEdgeRange(a.by_edge_range)}
+      ${renderByTeam(a.by_team)}
+      ${renderWeekly(a.weekly)}
+      ${renderKelly(a.kelly_analysis)}
+    `;
+  } catch (e) { el.innerHTML = errorHtml(e.message); }
+}
+
+function renderProfitChart(history) {
+  if (!history || !history.length) return '';
+  const points = history.map((h, i) => {
+    const x = (i / Math.max(1, history.length - 1)) * 100;
+    const minY = Math.min(...history.map(p => p.cumulative));
+    const maxY = Math.max(...history.map(p => p.cumulative));
+    const range = maxY - minY || 1;
+    const y = 100 - ((h.cumulative - minY) / range) * 100;
+    return `${x},${y}`;
+  }).join(' ');
+  const last = history[history.length - 1];
+  const color = last.cumulative >= 0 ? 'var(--green)' : 'var(--red)';
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Kumulativer Profitverlauf</div>
+      <svg viewBox="-2 -5 104 110" style="width:100%;height:180px;" preserveAspectRatio="none">
+        <line x1="0" y1="50" x2="100" y2="50" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="2"/>
+        <polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/>
+      </svg>
+      <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;color:var(--text3);margin-top:4px">
+        <span>Wette #1</span>
+        <span style="color:${color}">Aktuell: ${last.cumulative >= 0 ? '+' : ''}${last.cumulative}</span>
+        <span>Wette #${history.length}</span>
+      </div>
+    </div>`;
+}
+
+function renderExpectedVsActual(eva, avgWon, avgLost) {
+  if (!eva) return '';
+  const diffColor = eva.difference >= 0 ? 'var(--green)' : 'var(--red)';
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Erwarteter vs Tatsächlicher Profit</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px">
+        <div class="stat-badge"><div class="stat-val" style="font-size:22px">${eva.expected_profit >= 0 ? '+' : ''}${eva.expected_profit}</div><div class="stat-lbl">Erwartet (EV)</div></div>
+        <div class="stat-badge"><div class="stat-val" style="font-size:22px;color:${eva.actual_profit >= 0 ? 'var(--green)' : 'var(--red)'}">${eva.actual_profit >= 0 ? '+' : ''}${eva.actual_profit}</div><div class="stat-lbl">Tatsächlich</div></div>
+        <div class="stat-badge"><div class="stat-val" style="font-size:22px;color:${diffColor}">${eva.difference >= 0 ? '+' : ''}${eva.difference}</div><div class="stat-lbl">Differenz</div></div>
+        <div class="stat-badge"><div class="stat-val" style="font-size:22px;color:var(--green)">+${avgWon}</div><div class="stat-lbl">Ø Gewinn/Wette</div></div>
+        <div class="stat-badge"><div class="stat-val" style="font-size:22px;color:var(--red)">${avgLost}</div><div class="stat-lbl">Ø Verlust/Wette</div></div>
+      </div>
+    </div>`;
+}
+
+function renderCalibration(cal) {
+  if (!cal || !cal.length) return '';
+  const rows = cal.map(c => {
+    const diffCol = Math.abs(c.diff) < 0.05 ? 'var(--green)' : Math.abs(c.diff) < 0.10 ? 'var(--gold)' : 'var(--red)';
+    return `<tr>
+      <td>${c.range}</td><td>${c.bets}</td>
+      <td>${(c.predicted_wr * 100).toFixed(1)}%</td>
+      <td style="font-weight:600">${(c.actual_wr * 100).toFixed(1)}%</td>
+      <td style="color:${diffCol}">${(c.diff * 100).toFixed(1)}%</td>
+    </tr>`;
+  }).join('');
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Modell-Kalibrierung · KI-Wahrscheinlichkeit vs Realität</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:12px;font-family:var(--mono)">
+        Perfekt kalibriert = Diff nahe 0%. Positiv = Modell unterschätzt, Negativ = Modell überschätzt.
+      </div>
+      <table class="data-table"><thead><tr>
+        <th>KI-Bereich</th><th>Wetten</th><th>Vorhergesagt</th><th>Tatsächlich</th><th>Diff</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+}
+
+function renderByRating(ratings) {
+  if (!ratings || !ratings.length) return '';
+  const rows = ratings.map(r => `<tr>
+    <td>${r.label}</td><td>${r.bets}</td><td>${r.won}W / ${r.lost}L</td>
+    <td>${(r.win_rate * 100).toFixed(0)}%</td>
+    <td style="color:${r.profit >= 0 ? 'var(--green)' : 'var(--red)'}">${r.profit >= 0 ? '+' : ''}${r.profit}</td>
+    <td style="color:${r.roi >= 0 ? 'var(--green)' : 'var(--red)'}">${r.roi >= 0 ? '+' : ''}${r.roi}%</td>
+    <td>${r.avg_odds.toFixed(2)}</td>
+    <td>${(r.avg_edge * 100).toFixed(1)}%</td>
+  </tr>`).join('');
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Effektivität nach Empfehlungsstufe</div>
+      <table class="data-table"><thead><tr>
+        <th>Rating</th><th>Wetten</th><th>Bilanz</th><th>Win%</th><th>Profit</th><th>ROI</th><th>Ø Quote</th><th>Ø Edge</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+}
+
+function renderBySide(sides) {
+  if (!sides) return '';
+  const row = (label, s) => `<tr>
+    <td>${label}</td><td>${s.bets}</td><td>${s.won}W / ${s.lost}L</td>
+    <td>${(s.win_rate * 100).toFixed(0)}%</td>
+    <td style="color:${s.profit >= 0 ? 'var(--green)' : 'var(--red)'}">${s.profit >= 0 ? '+' : ''}${s.profit}</td>
+    <td style="color:${s.roi >= 0 ? 'var(--green)' : 'var(--red)'}">${s.roi >= 0 ? '+' : ''}${s.roi}%</td>
+  </tr>`;
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Heim vs Auswärts</div>
+      <table class="data-table"><thead><tr>
+        <th>Seite</th><th>Wetten</th><th>Bilanz</th><th>Win%</th><th>Profit</th><th>ROI</th>
+      </tr></thead><tbody>${row('🏠 Heim', sides.home)}${row('✈️ Auswärts', sides.away)}</tbody></table>
+    </div>`;
+}
+
+function renderByOddsRange(ranges) {
+  return renderRangeTable(ranges, 'Effektivität nach Quotenbereich', 'Quoten');
+}
+function renderByEdgeRange(ranges) {
+  return renderRangeTable(ranges, 'Effektivität nach Edge-Bereich', 'Edge');
+}
+
+function renderRangeTable(ranges, title, rangeLabel) {
+  if (!ranges || !ranges.length) return '';
+  const rows = ranges.map(r => `<tr>
+    <td>${r.range}</td><td>${r.bets}</td><td>${r.won}W / ${r.lost}L</td>
+    <td>${r.bets ? (r.win_rate * 100).toFixed(0) + '%' : '–'}</td>
+    <td style="color:${r.profit >= 0 ? 'var(--green)' : 'var(--red)'}">${r.bets ? (r.profit >= 0 ? '+' : '') + r.profit : '–'}</td>
+    <td style="color:${r.roi >= 0 ? 'var(--green)' : 'var(--red)'}">${r.bets ? (r.roi >= 0 ? '+' : '') + r.roi + '%' : '–'}</td>
+  </tr>`).join('');
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">${title}</div>
+      <table class="data-table"><thead><tr>
+        <th>${rangeLabel}</th><th>Wetten</th><th>Bilanz</th><th>Win%</th><th>Profit</th><th>ROI</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+}
+
+function renderByTeam(teams) {
+  if (!teams || !teams.length) return '';
+  const rows = teams.slice(0, 15).map(t => `<tr>
+    <td class="team-name">${t.team}</td><td>${t.bets}</td><td>${t.won}W / ${t.lost}L</td>
+    <td>${(t.win_rate * 100).toFixed(0)}%</td>
+    <td style="color:${t.profit >= 0 ? 'var(--green)' : 'var(--red)'}">${t.profit >= 0 ? '+' : ''}${t.profit}</td>
+    <td style="color:${t.roi >= 0 ? 'var(--green)' : 'var(--red)'}">${t.roi >= 0 ? '+' : ''}${t.roi}%</td>
+  </tr>`).join('');
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Profitabelste Teams</div>
+      <table class="data-table"><thead><tr>
+        <th>Team</th><th>Wetten</th><th>Bilanz</th><th>Win%</th><th>Profit</th><th>ROI</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+}
+
+function renderWeekly(weeks) {
+  if (!weeks || !weeks.length) return '';
+  const rows = weeks.map(w => `<tr>
+    <td>${w.week}</td><td>${w.bets}</td><td>${w.won}W / ${w.lost}L</td>
+    <td style="color:${w.profit >= 0 ? 'var(--green)' : 'var(--red)'}">${w.profit >= 0 ? '+' : ''}${w.profit}</td>
+    <td style="color:${w.roi >= 0 ? 'var(--green)' : 'var(--red)'}">${w.roi >= 0 ? '+' : ''}${w.roi}%</td>
+    <td style="font-weight:600;color:${w.cumulative >= 0 ? 'var(--green)' : 'var(--red)'}">${w.cumulative >= 0 ? '+' : ''}${w.cumulative}</td>
+  </tr>`).join('');
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Wöchentlicher Verlauf</div>
+      <table class="data-table"><thead><tr>
+        <th>Woche</th><th>Wetten</th><th>Bilanz</th><th>Profit</th><th>ROI</th><th>Kumulativ</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+}
+
+function renderKelly(kelly) {
+  if (!kelly || !kelly.entries || !kelly.entries.length) return '';
+  const k = kelly;
+  const kellyColor = k.kelly_total_profit >= 0 ? 'var(--green)' : 'var(--red)';
+  const flatColor = k.flat_total_profit >= 0 ? 'var(--green)' : 'var(--red)';
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Kelly-Criterion · Was wäre mit optimalem Einsatz?</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:12px;font-family:var(--mono)">
+        Start-Bankroll: ${k.start_bankroll} · Kelly passt den Einsatz an die Edge an.
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+        <div class="stat-badge">
+          <div class="stat-val" style="font-size:22px;color:${kellyColor}">${k.kelly_total_profit >= 0 ? '+' : ''}${k.kelly_total_profit}</div>
+          <div class="stat-lbl">Kelly Profit</div>
+        </div>
+        <div class="stat-badge">
+          <div class="stat-val" style="font-size:22px;color:${flatColor}">${k.flat_total_profit >= 0 ? '+' : ''}${k.flat_total_profit}</div>
+          <div class="stat-lbl">Flat-Stake Profit</div>
+        </div>
+        <div class="stat-badge">
+          <div class="stat-val" style="font-size:22px">${k.end_bankroll}</div>
+          <div class="stat-lbl">Kelly Bankroll</div>
+        </div>
+      </div>
+    </div>`;
 }
 
 // ══════════════════════════════════════════════════════
