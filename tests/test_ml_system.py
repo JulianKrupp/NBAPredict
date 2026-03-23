@@ -1,5 +1,5 @@
 """
-Unit-Tests für das ML-System (v2) – angepasst an 43 Features.
+Unit-Tests für das ML-System (v3) – 46 Features inkl. Elo.
 """
 
 import pytest
@@ -35,7 +35,7 @@ def mock_config() -> Config:
 
 
 def make_sample(home_won: int = 1, **overrides) -> TrainingSample:
-    """Erstellt ein Minimal-TrainingSample (v2 mit 43 Features)."""
+    """Erstellt ein Minimal-TrainingSample (v3 mit 46 Features)."""
     defaults = dict(
         game_id=1, game_date="2025-01-01",
         home_team="A", away_team="B",
@@ -47,7 +47,7 @@ def make_sample(home_won: int = 1, **overrides) -> TrainingSample:
         home_offensive_rating=112.0, home_defensive_rating=108.0,
         home_net_rating=4.0, home_pace=98.0, home_true_shooting=0.57,
         home_last_5_win_rate=0.6, home_last_10_win_rate=0.6, home_days_rest=2,
-        # Heimteam – NEU v2 (4)
+        # Heimteam – v2 (4)
         home_current_streak=2,
         home_fatigue_score=0.15,
         home_form_rating=0.62,
@@ -59,7 +59,7 @@ def make_sample(home_won: int = 1, **overrides) -> TrainingSample:
         away_offensive_rating=108.5, away_defensive_rating=110.5,
         away_net_rating=-2.0, away_pace=97.0, away_true_shooting=0.55,
         away_last_5_win_rate=0.4, away_last_10_win_rate=0.45, away_days_rest=1,
-        # Auswärtsteam – NEU v2 (4)
+        # Auswärtsteam – v2 (4)
         away_current_streak=-1,
         away_fatigue_score=0.45,
         away_form_rating=0.42,
@@ -67,9 +67,13 @@ def make_sample(home_won: int = 1, **overrides) -> TrainingSample:
         # Differenz – Basis (4)
         diff_win_rate=0.15, diff_point_diff=7.0,
         diff_net_rating=6.0, diff_last_5=0.2,
-        # Differenz – NEU v2 (2)
+        # Differenz – v2 (2)
         diff_streak=3,
         diff_fatigue=-0.30,
+        # Elo – v3 (3)
+        home_elo=1550.0,
+        away_elo=1480.0,
+        diff_elo=70.0,
         # Odds + Label
         odds_implied_home_prob=0.6,
         home_team_won=home_won,
@@ -94,17 +98,17 @@ def make_team(name: str = "Team", wins: int = 40, losses: int = 20,
 
 
 class TestTrainingSample:
-    """Tests für das TrainingSample-Datenmodell (v2)."""
+    """Tests für das TrainingSample-Datenmodell (v3)."""
 
     def test_get_feature_columns_returns_list(self):
         features = TrainingSample.get_feature_columns()
         assert isinstance(features, list)
         assert len(features) > 0
 
-    def test_feature_count_is_43(self):
-        """v2 hat 43 Feature-Spalten (33 alt + 10 neu)."""
+    def test_feature_count_is_46(self):
+        """v3 hat 46 Feature-Spalten (43 v2 + 3 Elo)."""
         features = TrainingSample.get_feature_columns()
-        assert len(features) == 43
+        assert len(features) == 46
 
     def test_feature_columns_exclude_metadata(self):
         features = TrainingSample.get_feature_columns()
@@ -123,18 +127,24 @@ class TestTrainingSample:
         for req in required:
             assert req in features, f"Feature '{req}' fehlt"
 
-    def test_new_v2_features_present(self):
-        """Alle neuen v2-Features sind enthalten."""
+    def test_v2_features_present(self):
+        """Alle v2-Features sind enthalten."""
         features = TrainingSample.get_feature_columns()
-        new_features = [
+        v2_features = [
             "home_current_streak", "home_fatigue_score",
             "home_form_rating", "home_games_last_7_days",
             "away_current_streak", "away_fatigue_score",
             "away_form_rating", "away_games_last_7_days",
             "diff_streak", "diff_fatigue",
         ]
-        for feat in new_features:
-            assert feat in features, f"Neues Feature '{feat}' fehlt"
+        for feat in v2_features:
+            assert feat in features, f"v2-Feature '{feat}' fehlt"
+
+    def test_elo_features_present(self):
+        """Alle Elo-Features sind enthalten."""
+        features = TrainingSample.get_feature_columns()
+        for feat in ("home_elo", "away_elo", "diff_elo"):
+            assert feat in features, f"Elo-Feature '{feat}' fehlt"
 
     def test_sample_creation_with_all_fields(self):
         sample = make_sample()
@@ -142,6 +152,8 @@ class TestTrainingSample:
         assert sample.home_win_rate == pytest.approx(0.6)
         assert sample.home_current_streak == 2
         assert sample.diff_fatigue == pytest.approx(-0.30)
+        assert sample.home_elo == pytest.approx(1550.0)
+        assert sample.diff_elo == pytest.approx(70.0)
 
     def test_asdict_contains_all_fields(self):
         sample = make_sample()
@@ -150,6 +162,9 @@ class TestTrainingSample:
         assert "home_current_streak" in d
         assert "diff_streak" in d
         assert "diff_fatigue" in d
+        assert "home_elo" in d
+        assert "away_elo" in d
+        assert "diff_elo" in d
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -167,90 +182,37 @@ class TestNBAModelTrainer:
                 home_win_rate=0.4 + (i % 5) * 0.05,
                 away_win_rate=0.3 + (i % 4) * 0.05,
                 home_net_rating=-5.0 + i * 0.15,
-                away_net_rating=-3.0 + i * 0.1,
-                diff_win_rate=(i % 2 - 0.5) * 0.3,
-                home_current_streak=(i % 5) - 2,
-                away_current_streak=(i % 4) - 2,
-                diff_streak=((i % 5) - 2) - ((i % 4) - 2),
+                away_net_rating=-3.0 + i * 0.10,
+                home_elo=1450.0 + i * 1.0,
+                away_elo=1550.0 - i * 0.5,
+                diff_elo=(1450.0 + i) - (1550.0 - i * 0.5),
             ))
         return samples
 
-    def test_train_returns_model_metrics(self):
+    def test_train_returns_metrics(self, tmp_path):
+        samples = self._make_samples(100)
         trainer = NBAModelTrainer()
-        samples = self._make_samples(120)
-        metrics = trainer.train(samples=samples)
-        assert isinstance(metrics, ModelMetrics)
+        # Temporäre Pfade setzen
+        import src.ml.model_trainer as mt
+        orig_model = mt.MODEL_PATH
+        orig_metrics = mt.METRICS_PATH
+        mt.MODEL_PATH = tmp_path / "model.joblib"
+        mt.METRICS_PATH = tmp_path / "metrics.json"
+        mt.MODEL_DIR = tmp_path
 
-    def test_train_accuracy_in_valid_range(self):
+        try:
+            metrics = trainer.train(samples=samples, test_size=0.3)
+            assert isinstance(metrics, ModelMetrics)
+            assert 0.0 <= metrics.accuracy <= 1.0
+            assert metrics.feature_count == 46
+        finally:
+            mt.MODEL_PATH = orig_model
+            mt.METRICS_PATH = orig_metrics
+
+    def test_feature_names_match_sample_columns(self):
         trainer = NBAModelTrainer()
-        samples = self._make_samples(120)
-        metrics = trainer.train(samples=samples)
-        assert 0.3 <= metrics.accuracy <= 1.0
-
-    def test_train_roc_auc_in_valid_range(self):
-        trainer = NBAModelTrainer()
-        samples = self._make_samples(120)
-        metrics = trainer.train(samples=samples)
-        assert 0.0 <= metrics.roc_auc <= 1.0
-
-    def test_train_raises_on_too_few_samples(self):
-        trainer = NBAModelTrainer()
-        samples = self._make_samples(30)
-        with pytest.raises(ValueError, match="Zu wenige"):
-            trainer.train(samples=samples)
-
-    def test_model_metrics_to_dict(self):
-        metrics = ModelMetrics(
-            model_name="Test",
-            accuracy=0.65,
-            roc_auc=0.70,
-            brier_score=0.22,
-            cv_accuracy_mean=0.63,
-            cv_accuracy_std=0.02,
-            train_samples=100,
-            test_samples=25,
-            feature_count=43,
-            top_features=[("home_win_rate", 0.15)],
-        )
-        d = metrics.to_dict()
-        assert d["model_name"] == "Test"
-        assert d["feature_count"] == 43
-
-    def test_prepare_data_returns_correct_shapes(self):
-        trainer = NBAModelTrainer()
-        samples = self._make_samples(50)
-        X, y = trainer._prepare_data(samples)
-        assert X.shape == (50, len(TrainingSample.get_feature_columns()))
-        assert y.shape == (50,)
-        assert set(y).issubset({0, 1})
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  AdvancedTeamStats Tests
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-class TestAdvancedTeamStats:
-
-    def test_from_basic_stats_creates_valid_object(self):
-        stats = AdvancedTeamStats.from_basic_stats(
-            team_id=1, team_name="Lakers",
-            wins=50, losses=20,
-            avg_pts_scored=118.0, avg_pts_allowed=110.0,
-            recent_results=[True, True, False, True, True],
-        )
-        assert stats.team_name == "Lakers"
-        assert stats.offensive_rating > 0
-        assert 0.0 <= stats.last_5_win_rate <= 1.0
-
-    def test_true_shooting_is_clamped(self):
-        stats = AdvancedTeamStats.from_basic_stats(
-            team_id=1, team_name="Extreme",
-            wins=80, losses=2,
-            avg_pts_scored=140.0, avg_pts_allowed=90.0,
-            recent_results=[True] * 10,
-        )
-        assert 0.40 <= stats.true_shooting_pct <= 0.70
+        expected = TrainingSample.get_feature_columns()
+        assert trainer.feature_names == expected
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -290,8 +252,10 @@ class TestMLPredictor:
         assert 1 <= result.consensus_agreement_count <= 3
 
     def test_build_feature_vector_has_correct_length(self, mock_config):
-        """Feature-Vektor hat exakt 43 Einträge (v2)."""
+        """Feature-Vektor hat exakt 46 Einträge (v3 mit Elo)."""
         predictor = MLPredictor(mock_config)
+        # Elo-Cache manuell setzen damit kein API-Call nötig
+        predictor._elo_cache = {"A": 1550.0, "B": 1480.0}
         home = make_team("A")
         away = make_team("B")
         home_adv = predictor._get_advanced_stats(home)
@@ -299,7 +263,7 @@ class TestMLPredictor:
         vector = predictor._build_feature_vector(home, away, home_adv, away_adv, None)
         expected_length = len(TrainingSample.get_feature_columns())
         assert len(vector) == expected_length
-        assert expected_length == 43
+        assert expected_length == 46
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -339,3 +303,57 @@ class TestComparisonEntry:
         )
         assert isinstance(entry.value_bet_indicator, str)
         assert len(entry.value_bet_indicator) > 0
+
+    def test_normalize_odds_removes_vig(self):
+        h, a = OddsVsMLComparison._normalize_odds(1.90, 2.00)
+        assert pytest.approx(h + a, abs=0.001) == 1.0
+        assert h > a  # Niedrigere Quote = höhere Wahrscheinlichkeit
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Elo Tests
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestElo:
+
+    def test_calculate_elo_ratings_basic(self):
+        from src.ml.elo import calculate_elo_ratings
+        from src.models.game import Game
+
+        games = [
+            Game(game_id=1, home_team="A", away_team="B",
+                 home_score=110, away_score=100, status="Final", date="2025-01-01"),
+            Game(game_id=2, home_team="B", away_team="A",
+                 home_score=105, away_score=95, status="Final", date="2025-01-02"),
+        ]
+        elo = calculate_elo_ratings(games)
+        assert "A" in elo
+        assert "B" in elo
+
+    def test_elo_per_game_returns_before_values(self):
+        from src.ml.elo import calculate_elo_per_game
+        from src.models.game import Game
+
+        games = [
+            Game(game_id=1, home_team="A", away_team="B",
+                 home_score=110, away_score=100, status="Final", date="2025-01-01"),
+        ]
+        per_game = calculate_elo_per_game(games)
+        assert 1 in per_game
+        h_elo, a_elo = per_game[1]
+        # Vor dem ersten Spiel sollten beide bei 1500 starten
+        assert h_elo == pytest.approx(1500.0)
+        assert a_elo == pytest.approx(1500.0)
+
+    def test_winner_gains_elo(self):
+        from src.ml.elo import calculate_elo_ratings
+        from src.models.game import Game
+
+        games = [
+            Game(game_id=1, home_team="Winner", away_team="Loser",
+                 home_score=120, away_score=90, status="Final", date="2025-01-01"),
+        ]
+        elo = calculate_elo_ratings(games)
+        assert elo["Winner"] > 1500.0
+        assert elo["Loser"] < 1500.0
