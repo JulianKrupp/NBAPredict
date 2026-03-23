@@ -1,18 +1,15 @@
 """
-Trainingsdaten-Kollektor für das NBA ML-Modell (v2).
+Trainingsdaten-Kollektor für das NBA ML-Modell (v3).
 
 Kombiniert Daten aus drei Quellen:
   1. BallDontLie API  – historische Spielergebnisse & Team-Standings
   2. nba_api          – erweiterte Team-Statistiken (Advanced Stats)
   3. The Odds API     – historische Wettquoten als zusätzliches Feature
 
-Jede Trainingszeile repräsentiert ein abgeschlossenes Spiel mit
-Feature-Vektor (Teamstats zum Spielzeitpunkt) und Label (Heimsieg = 1).
-
-Änderungen v2:
-  - 10 neue Features: streak, fatigue, form_rating, games_last_7 (je Team)
-    + diff_streak, diff_fatigue (Differenz-Features)
-  - Feature-Anzahl: 33 → 43
+Änderungen v3:
+  - Elo-Rating als Feature (home_elo, away_elo, diff_elo)
+  - Feature-Anzahl: 43 → 46
+  - Pagination-Fix: nutzt cursor-basierte Pagination vom NBAApiClient
 """
 
 from __future__ import annotations
@@ -30,13 +27,13 @@ from src.api.nba_api_client import NBAApiClient
 from src.api.nba_stats_client import NBAStatsApiClient, AdvancedTeamStats
 from src.api.odds_api_client import OddsApiClient
 from src.api.base_client import ApiError
+from src.ml.elo import calculate_elo_per_game
 from src.models.game import Game
 from src.models.team import Team
 from src.utils.config import Config
 
 logger = logging.getLogger(__name__)
 
-# Pfad für die Trainingsdaten
 TRAINING_DATA_PATH = Path("data/training/training_data.csv")
 METADATA_PATH = Path("data/training/metadata.json")
 
@@ -45,7 +42,6 @@ METADATA_PATH = Path("data/training/metadata.json")
 class TrainingSample:
     """
     Eine Zeile Trainingsdaten – ein abgeschlossenes NBA-Spiel.
-
     Features beschreiben den Zustand beider Teams VOR dem Spiel.
     Label = 1 wenn Heimteam gewonnen hat, 0 wenn Auswärtsteam.
     """
@@ -72,11 +68,10 @@ class TrainingSample:
     home_last_5_win_rate: float
     home_last_10_win_rate: float
     home_days_rest: int
-    # NEU v2:
-    home_current_streak: int        # +N Siege, -N Niederlagen in Folge
-    home_fatigue_score: float       # 0.0 (ausgeruht) – 1.0 (belastet)
-    home_form_rating: float         # Gewichtete Formkurve (L3/L5/L10)
-    home_games_last_7_days: int     # Spieldichte letzte Woche
+    home_current_streak: int
+    home_fatigue_score: float
+    home_form_rating: float
+    home_games_last_7_days: int
 
     # ── Auswärtsteam-Features ─────────────────────────────────────────
     away_win_rate: float
@@ -93,37 +88,33 @@ class TrainingSample:
     away_last_5_win_rate: float
     away_last_10_win_rate: float
     away_days_rest: int
-    # NEU v2:
     away_current_streak: int
     away_fatigue_score: float
     away_form_rating: float
     away_games_last_7_days: int
 
-    # ── Differenz-Features (Heimteam minus Auswärtsteam) ─────────────
+    # ── Differenz-Features ───────────────────────────────────────────
     diff_win_rate: float
     diff_point_diff: float
     diff_net_rating: float
     diff_last_5: float
-    # NEU v2:
-    diff_streak: int                # home_streak - away_streak
-    diff_fatigue: float             # home_fatigue - away_fatigue
+    diff_streak: int
+    diff_fatigue: float
 
-    # ── Wettquoten-Feature (optional, 0.5 wenn nicht verfügbar) ──────
+    # ── Elo-Features (v3) ────────────────────────────────────────────
+    home_elo: float
+    away_elo: float
+    diff_elo: float
+
+    # ── Wettquoten-Feature ───────────────────────────────────────────
     odds_implied_home_prob: float
 
     # ── Label ─────────────────────────────────────────────────────────
-    home_team_won: int  # 1 = Heimteam gewann, 0 = Auswärtsteam gewann
+    home_team_won: int
 
     @classmethod
     def get_feature_columns(cls) -> list[str]:
         """Gibt die Namen aller Feature-Spalten zurück (ohne Metadaten und Label)."""
-        # Dummy-Instanz mit allen Nullen erzeugen
-        field_count = len(cls.__dataclass_fields__) - 7  # 7 Meta+Label Felder
-        dummy_args = [0] * 6  # Metadaten (game_id..away_score)
-        dummy_args = [0, "", "", "", 0, 0]  # Typen korrekt
-        dummy_args += [0] * (len(cls.__dataclass_fields__) - 6 - 1)  # Features
-        dummy_args += [0]  # Label
-
         all_fields = list(cls.__dataclass_fields__.keys())
         meta_fields = {"game_id", "game_date", "home_team", "away_team",
                        "home_score", "away_score", "home_team_won"}
@@ -131,10 +122,7 @@ class TrainingSample:
 
 
 class TrainingDataCollector:
-    """
-    Sammelt historische NBA-Spieldaten aus mehreren APIs
-    und erstellt daraus einen strukturierten Trainingsdatensatz.
-    """
+    """Sammelt historische NBA-Spieldaten und erstellt Trainingsdatensätze."""
 
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -151,12 +139,7 @@ class TrainingDataCollector:
         max_games: int = 500,
         output_path: Path = TRAINING_DATA_PATH,
     ) -> int:
-        """
-        Hauptmethode: Sammelt Trainingsdaten und speichert sie als CSV.
-
-        Returns:
-            Anzahl der gesammelten Samples.
-        """
+        """Sammelt Trainingsdaten und speichert sie als CSV."""
         if seasons is None:
             seasons = [2023, 2024]
 
@@ -166,7 +149,7 @@ class TrainingDataCollector:
         print(f"{'='*60}")
 
         # Schritt 1: Spiele laden
-        print("\n  [1/4] Lade Spielergebnisse (BallDontLie)...")
+        print("\n  [1/5] Lade Spielergebnisse (BallDontLie)...")
         all_games = self._fetch_historical_games(seasons, max_games)
         if not all_games:
             print("  Fehler: Keine Spiele geladen.")
@@ -174,7 +157,7 @@ class TrainingDataCollector:
         print(f"        → {len(all_games)} Spiele geladen")
 
         # Schritt 2: Team-Statistiken berechnen
-        print("\n  [2/4] Berechne Team-Statistiken pro Saison...")
+        print("\n  [2/5] Berechne Team-Statistiken pro Saison...")
         all_team_stats: dict[int, dict[str, Team]] = {}
         for season in seasons:
             season_games = [g for g in all_games if g.season == season]
@@ -187,8 +170,8 @@ class TrainingDataCollector:
             print("  Fehler: Keine Team-Statistiken berechnet.")
             return 0
 
-        # Schritt 3: Advanced Stats berechnen/laden
-        print("\n  [3/4] Berechne Advanced Stats...")
+        # Schritt 3: Advanced Stats berechnen
+        print("\n  [3/5] Berechne Advanced Stats...")
         advanced_stats_cache: dict[str, AdvancedTeamStats] = {}
         for season, teams in all_team_stats.items():
             for team_name, team in teams.items():
@@ -206,9 +189,16 @@ class TrainingDataCollector:
                     )
         print(f"        → {len(advanced_stats_cache)} Team-Advanced-Stats berechnet")
 
-        # Schritt 4: Trainingssamples erstellen
-        print("\n  [4/4] Erstelle Trainingssamples...")
-        samples = list(self._build_samples(all_games, all_team_stats, advanced_stats_cache))
+        # Schritt 4: Elo-Ratings berechnen
+        print("\n  [4/5] Berechne Elo-Ratings...")
+        elo_per_game = calculate_elo_per_game(all_games)
+        print(f"        → Elo für {len(elo_per_game)} Spiele berechnet")
+
+        # Schritt 5: Trainingssamples erstellen
+        print("\n  [5/5] Erstelle Trainingssamples...")
+        samples = list(self._build_samples(
+            all_games, all_team_stats, advanced_stats_cache, elo_per_game
+        ))
         print(f"        → {len(samples)} Samples erstellt")
 
         # CSV speichern
@@ -235,12 +225,7 @@ class TrainingDataCollector:
 
     @staticmethod
     def load_from_csv(path: Path = TRAINING_DATA_PATH) -> list[TrainingSample]:
-        """
-        Lädt gespeicherte Trainingsdaten aus einer CSV-Datei.
-
-        Raises:
-            FileNotFoundError: Wenn die Datei nicht existiert.
-        """
+        """Lädt gespeicherte Trainingsdaten aus einer CSV-Datei."""
         if not path.exists():
             raise FileNotFoundError(
                 f"Trainingsdaten nicht gefunden: {path}\n"
@@ -304,6 +289,10 @@ class TrainingDataCollector:
                         diff_last_5=float(row["diff_last_5"]),
                         diff_streak=int(row["diff_streak"]),
                         diff_fatigue=float(row["diff_fatigue"]),
+                        # Elo
+                        home_elo=float(row["home_elo"]),
+                        away_elo=float(row["away_elo"]),
+                        diff_elo=float(row["diff_elo"]),
                         # Odds + Label
                         odds_implied_home_prob=float(row["odds_implied_home_prob"]),
                         home_team_won=int(row["home_team_won"]),
@@ -318,76 +307,34 @@ class TrainingDataCollector:
     def _fetch_historical_games(
         self, seasons: list[int], max_games: int
     ) -> list[Game]:
-        """Lädt abgeschlossene Spiele aus den angegebenen Saisons."""
+        """Lädt abgeschlossene Spiele – nutzt cursor-basierte Pagination."""
         all_games: list[Game] = []
         games_per_season = max_games // len(seasons)
 
         for season in seasons:
             if len(all_games) >= max_games:
                 break
-            games = self._fetch_season_games(season, games_per_season)
+            games = self.nba_client._fetch_season_games_paginated(season, games_per_season)
             all_games.extend(games)
             self.logger.info("Saison %d: %d Spiele geladen", season, len(games))
 
         return all_games[:max_games]
-
-    def _fetch_season_games(self, season: int, limit: int) -> list[Game]:
-        """Lädt Spiele einer einzelnen Saison (seitenweise)."""
-        collected: list[Game] = []
-        page = 1
-
-        while len(collected) < limit:
-            try:
-                response = self.nba_client.get(
-                    f"{self.nba_client.base_url}/games",
-                    params={
-                        "seasons[]": season,
-                        "per_page": min(100, limit - len(collected)),
-                        "page": page,
-                    },
-                    headers=self.nba_client._default_headers,
-                )
-                raw_games = response.get("data", [])
-                if not raw_games:
-                    break
-
-                for raw in raw_games:
-                    try:
-                        game = Game.from_api_response(raw)
-                        if game.is_final and game.home_score > 0:
-                            collected.append(game)
-                    except (KeyError, ValueError):
-                        continue
-
-                meta = response.get("meta", {})
-                total_pages = meta.get("total_pages", 1)
-                if page >= total_pages:
-                    break
-                page += 1
-                time.sleep(0.2)
-
-            except ApiError as exc:
-                self.logger.error("Fehler beim Laden Saison %d, Seite %d: %s",
-                                  season, page, exc)
-                break
-
-        return collected
 
     def _build_samples(
         self,
         games: list[Game],
         team_stats: dict[int, dict[str, Team]],
         advanced_stats: dict[str, AdvancedTeamStats],
+        elo_per_game: dict[int, tuple[float, float]] | None = None,
     ) -> Iterator[TrainingSample]:
         """Erstellt TrainingSample-Objekte aus Spielen und Teamstatistiken."""
         skipped = 0
         for game in games:
-            sample = self._game_to_sample(game, team_stats, advanced_stats)
+            sample = self._game_to_sample(game, team_stats, advanced_stats, elo_per_game)
             if sample is not None:
                 yield sample
             else:
                 skipped += 1
-
         if skipped > 0:
             self.logger.info("%d Spiele ohne ausreichende Stats übersprungen", skipped)
 
@@ -396,6 +343,7 @@ class TrainingDataCollector:
         game: Game,
         team_stats: dict[int, dict[str, Team]],
         advanced_stats: dict[str, AdvancedTeamStats],
+        elo_per_game: dict[int, tuple[float, float]] | None = None,
     ) -> TrainingSample | None:
         """Konvertiert ein einzelnes Spiel in ein TrainingSample."""
         season_stats = team_stats.get(game.season, {})
@@ -422,6 +370,12 @@ class TrainingDataCollector:
                 away_team.avg_points_scored, away_team.avg_points_allowed,
             )
 
+        # Elo-Ratings zum Zeitpunkt des Spiels
+        if elo_per_game and game.game_id in elo_per_game:
+            h_elo, a_elo = elo_per_game[game.game_id]
+        else:
+            h_elo, a_elo = 1500.0, 1500.0
+
         return TrainingSample(
             game_id=game.game_id,
             game_date=game.date,
@@ -429,7 +383,7 @@ class TrainingDataCollector:
             away_team=game.away_team,
             home_score=game.home_score,
             away_score=game.away_score,
-            # Heimteam – Basis
+            # Heimteam
             home_win_rate=home_team.win_rate,
             home_point_diff=home_team.point_differential,
             home_avg_pts_scored=home_team.avg_points_scored,
@@ -444,12 +398,11 @@ class TrainingDataCollector:
             home_last_5_win_rate=home_adv.last_5_win_rate,
             home_last_10_win_rate=home_adv.last_10_win_rate,
             home_days_rest=home_adv.days_since_last_game,
-            # Heimteam – NEU v2
             home_current_streak=home_team.current_streak,
             home_fatigue_score=home_team.fatigue_score,
             home_form_rating=home_team.form_rating,
             home_games_last_7_days=home_team.games_last_7_days,
-            # Auswärtsteam – Basis
+            # Auswärtsteam
             away_win_rate=away_team.win_rate,
             away_point_diff=away_team.point_differential,
             away_avg_pts_scored=away_team.avg_points_scored,
@@ -464,28 +417,29 @@ class TrainingDataCollector:
             away_last_5_win_rate=away_adv.last_5_win_rate,
             away_last_10_win_rate=away_adv.last_10_win_rate,
             away_days_rest=away_adv.days_since_last_game,
-            # Auswärtsteam – NEU v2
             away_current_streak=away_team.current_streak,
             away_fatigue_score=away_team.fatigue_score,
             away_form_rating=away_team.form_rating,
             away_games_last_7_days=away_team.games_last_7_days,
-            # Differenz-Features
+            # Differenz
             diff_win_rate=home_team.win_rate - away_team.win_rate,
             diff_point_diff=home_team.point_differential - away_team.point_differential,
             diff_net_rating=home_adv.net_rating - away_adv.net_rating,
             diff_last_5=home_adv.last_5_win_rate - away_adv.last_5_win_rate,
-            # NEU v2
             diff_streak=home_team.current_streak - away_team.current_streak,
             diff_fatigue=home_team.fatigue_score - away_team.fatigue_score,
+            # Elo
+            home_elo=h_elo,
+            away_elo=a_elo,
+            diff_elo=h_elo - a_elo,
             # Odds + Label
-            odds_implied_home_prob=0.5,  # Historische Quoten selten verfügbar
+            odds_implied_home_prob=0.5,
             home_team_won=1 if game.home_score > game.away_score else 0,
         )
 
     def _find_team(
         self, team_name: str, season_stats: dict[str, Team]
     ) -> Team | None:
-        """Findet ein Team per Name (exakt oder Teilmatch)."""
         if team_name in season_stats:
             return season_stats[team_name]
         name_lower = team_name.lower()
@@ -494,10 +448,7 @@ class TrainingDataCollector:
                 return team
         return None
 
-    def _save_to_csv(
-        self, samples: list[TrainingSample], path: Path
-    ) -> None:
-        """Speichert Trainingssamples als CSV."""
+    def _save_to_csv(self, samples: list[TrainingSample], path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         if not samples:
             return
@@ -509,12 +460,8 @@ class TrainingDataCollector:
                 writer.writerow(asdict(sample))
 
     def _save_metadata(
-        self,
-        samples: list[TrainingSample],
-        seasons: list[int],
-        data_path: Path,
+        self, samples: list[TrainingSample], seasons: list[int], data_path: Path,
     ) -> None:
-        """Speichert Metadaten zum Trainingsdatensatz."""
         features = TrainingSample.get_feature_columns()
         metadata = {
             "total_samples": len(samples),
