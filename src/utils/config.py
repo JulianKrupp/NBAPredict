@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 
 
 class Config:
-
     def __init__(self, env_file: str = ".env") -> None:
         env_path = Path(env_file)
         if env_path.exists():
@@ -15,7 +14,6 @@ class Config:
 
         self.balldontlie_api_key: str = os.getenv("BALLDONTLIE_API_KEY", "")
         self.odds_api_key: str        = os.getenv("ODDS_API_KEY", "")
-        # nba_api (stats.nba.com) braucht keinen Key
 
         self.balldontlie_base_url: str = "https://api.balldontlie.io/v1"
         self.odds_api_base_url: str    = "https://api.the-odds-api.com/v4"
