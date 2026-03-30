@@ -1,5 +1,5 @@
 """
-Unit-Tests für das ML-System (v3) – 46 Features inkl. Elo.
+Unit-Tests für das ML-System (v4) – 45 Features (ohne odds_implied_home_prob).
 """
 
 import pytest
@@ -7,7 +7,7 @@ import numpy as np
 from unittest.mock import MagicMock
 from dataclasses import asdict
 
-from src.ml.data_collector import TrainingSample
+from src.ml.data_collector import TrainingSample, _CumulativeTeamTracker
 from src.ml.model_trainer import NBAModelTrainer, ModelMetrics
 from src.ml.ml_predictor import MLPredictor, MLPredictionResult
 from src.ml.comparison import OddsVsMLComparison, ComparisonEntry
@@ -35,7 +35,7 @@ def mock_config() -> Config:
 
 
 def make_sample(home_won: int = 1, **overrides) -> TrainingSample:
-    """Erstellt ein Minimal-TrainingSample (v3 mit 46 Features)."""
+    """Erstellt ein Minimal-TrainingSample (v4 mit 45 Features + odds-Feld)."""
     defaults = dict(
         game_id=1, game_date="2025-01-01",
         home_team="A", away_team="B",
@@ -74,7 +74,7 @@ def make_sample(home_won: int = 1, **overrides) -> TrainingSample:
         home_elo=1550.0,
         away_elo=1480.0,
         diff_elo=70.0,
-        # Odds + Label
+        # Odds (Feld bleibt, wird aber nicht als Feature genutzt) + Label
         odds_implied_home_prob=0.6,
         home_team_won=home_won,
     )
@@ -98,17 +98,17 @@ def make_team(name: str = "Team", wins: int = 40, losses: int = 20,
 
 
 class TestTrainingSample:
-    """Tests für das TrainingSample-Datenmodell (v3)."""
+    """Tests für das TrainingSample-Datenmodell (v4)."""
 
     def test_get_feature_columns_returns_list(self):
         features = TrainingSample.get_feature_columns()
         assert isinstance(features, list)
         assert len(features) > 0
 
-    def test_feature_count_is_46(self):
-        """v3 hat 46 Feature-Spalten (43 v2 + 3 Elo)."""
+    def test_feature_count_is_45(self):
+        """v4 hat 45 Feature-Spalten (46 v3 - odds_implied_home_prob)."""
         features = TrainingSample.get_feature_columns()
-        assert len(features) == 46
+        assert len(features) == 45
 
     def test_feature_columns_exclude_metadata(self):
         features = TrainingSample.get_feature_columns()
@@ -117,12 +117,20 @@ class TestTrainingSample:
         for meta_field in meta:
             assert meta_field not in features
 
+    def test_odds_not_in_features(self):
+        """odds_implied_home_prob darf nicht als Feature genutzt werden."""
+        features = TrainingSample.get_feature_columns()
+        assert "odds_implied_home_prob" not in features, (
+            "odds_implied_home_prob sollte aus Features ausgeschlossen sein, "
+            "weil es im Training immer 0.5 ist."
+        )
+
     def test_feature_columns_include_key_stats(self):
         features = TrainingSample.get_feature_columns()
         required = [
             "home_win_rate", "away_win_rate",
             "home_net_rating", "away_net_rating",
-            "diff_win_rate", "odds_implied_home_prob",
+            "diff_win_rate",
         ]
         for req in required:
             assert req in features, f"Feature '{req}' fehlt"
@@ -165,6 +173,106 @@ class TestTrainingSample:
         assert "home_elo" in d
         assert "away_elo" in d
         assert "diff_elo" in d
+        # odds-Feld existiert weiterhin im Dataclass
+        assert "odds_implied_home_prob" in d
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  _CumulativeTeamTracker Tests (v4 – Data Leakage Fix)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCumulativeTeamTracker:
+    """Tests für den kumulativen Stats-Tracker."""
+
+    def test_initial_state_uses_defaults(self):
+        """Vor dem ersten Spiel: Default-Werte."""
+        tracker = _CumulativeTeamTracker("Test Team")
+        assert tracker.win_rate == 0.5
+        assert tracker.games_played == 0
+        assert tracker.avg_pts_scored == 113.0  # NBA-Durchschnitt
+        assert tracker.current_streak == 0
+
+    def test_stats_update_after_win(self):
+        """Nach einem Sieg: Stats korrekt aktualisiert."""
+        tracker = _CumulativeTeamTracker("Test Team")
+        tracker.update(110, 100, True, True, "2024-10-22")
+        assert tracker.win_rate == 1.0
+        assert tracker.games_played == 1
+        assert tracker.avg_pts_scored == 110.0
+        assert tracker.current_streak == 1
+
+    def test_stats_update_after_loss(self):
+        """Nach einer Niederlage: Stats korrekt aktualisiert."""
+        tracker = _CumulativeTeamTracker("Test Team")
+        tracker.update(95, 105, True, False, "2024-10-22")
+        assert tracker.win_rate == 0.0
+        assert tracker.current_streak == -1
+
+    def test_cumulative_no_leakage(self):
+        """Kumulative Stats dürfen KEINE zukünftigen Spiele enthalten."""
+        tracker = _CumulativeTeamTracker("Test Team")
+
+        # Spiel 1: Sieg
+        tracker.update(110, 100, True, True, "2024-10-22")
+        assert tracker.win_rate == 1.0  # 1/1
+
+        # Spiel 2: Niederlage
+        tracker.update(95, 105, False, False, "2024-10-24")
+        assert tracker.win_rate == 0.5  # 1/2
+        assert tracker.avg_pts_scored == 102.5  # (110+95)/2
+
+        # Spiel 3: Sieg
+        tracker.update(120, 110, True, True, "2024-10-26")
+        assert tracker.win_rate == pytest.approx(2 / 3)  # 2/3
+        assert tracker.current_streak == 1
+
+    def test_home_away_win_rate_tracked_separately(self):
+        """Heim- und Auswärts-Win-Rate werden getrennt gezählt."""
+        tracker = _CumulativeTeamTracker("Test Team")
+        tracker.update(110, 100, True, True, "2024-10-22")    # Heimsieg
+        tracker.update(95, 105, False, False, "2024-10-24")   # Auswärtsniederlage
+        assert tracker.home_win_rate == 1.0  # 1/1 Heim
+        assert tracker.away_win_rate == 0.0  # 0/1 Auswärts
+
+    def test_days_rest_before(self):
+        """Ruhetage werden korrekt berechnet."""
+        tracker = _CumulativeTeamTracker("Test Team")
+        tracker.update(110, 100, True, True, "2024-10-22")
+        rest = tracker.days_rest_before("2024-10-25")
+        assert rest == 2  # 25 - 22 - 1 = 2
+
+    def test_last_5_win_rate(self):
+        """Letzte-5-Spiele-Quote wird korrekt berechnet."""
+        tracker = _CumulativeTeamTracker("Test Team")
+        for i in range(10):
+            won = i >= 5  # Erste 5 verloren, letzte 5 gewonnen
+            tracker.update(100 + i, 100, True, won, f"2024-10-{22+i}")
+        assert tracker.last_5_win_rate == 1.0
+
+    def test_form_rating(self):
+        """Form-Rating gewichtet neuere Spiele stärker."""
+        tracker = _CumulativeTeamTracker("Test Team")
+        # 4 Niederlagen, dann 1 Sieg (neuestes Spiel)
+        for i in range(4):
+            tracker.update(95, 105, True, False, f"2024-10-{22+i}")
+        tracker.update(120, 100, True, True, "2024-10-26")
+        # Neuester Sieg hat höchstes Gewicht → Rating > 0.2 (= 1/5)
+        assert tracker.form_rating > 0.2
+
+    def test_advanced_stats_computation(self):
+        """Advanced Stats werden aus kumulativen Basisdaten berechnet."""
+        tracker = _CumulativeTeamTracker("Test Team")
+        tracker.update(115, 108, True, True, "2024-10-22")
+        adv = tracker.compute_advanced_stats()
+        assert "offensive_rating" in adv
+        assert "defensive_rating" in adv
+        assert "net_rating" in adv
+        assert "pace" in adv
+        assert "true_shooting" in adv
+        assert adv["net_rating"] == pytest.approx(
+            adv["offensive_rating"] - adv["defensive_rating"]
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -204,7 +312,7 @@ class TestNBAModelTrainer:
             metrics = trainer.train(samples=samples, test_size=0.3)
             assert isinstance(metrics, ModelMetrics)
             assert 0.0 <= metrics.accuracy <= 1.0
-            assert metrics.feature_count == 46
+            assert metrics.feature_count == 45  # v4: 45 statt 46
         finally:
             mt.MODEL_PATH = orig_model
             mt.METRICS_PATH = orig_metrics
@@ -252,9 +360,8 @@ class TestMLPredictor:
         assert 1 <= result.consensus_agreement_count <= 3
 
     def test_build_feature_vector_has_correct_length(self, mock_config):
-        """Feature-Vektor hat exakt 46 Einträge (v3 mit Elo)."""
+        """Feature-Vektor hat exakt 45 Einträge (v4 ohne odds)."""
         predictor = MLPredictor(mock_config)
-        # Elo-Cache manuell setzen damit kein API-Call nötig
         predictor._elo_cache = {"A": 1550.0, "B": 1480.0}
         home = make_team("A")
         away = make_team("B")
@@ -263,7 +370,7 @@ class TestMLPredictor:
         vector = predictor._build_feature_vector(home, away, home_adv, away_adv, None)
         expected_length = len(TrainingSample.get_feature_columns())
         assert len(vector) == expected_length
-        assert expected_length == 46
+        assert expected_length == 45  # v4: 45 statt 46
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -307,7 +414,7 @@ class TestComparisonEntry:
     def test_normalize_odds_removes_vig(self):
         h, a = OddsVsMLComparison._normalize_odds(1.90, 2.00)
         assert pytest.approx(h + a, abs=0.001) == 1.0
-        assert h > a  # Niedrigere Quote = höhere Wahrscheinlichkeit
+        assert h > a
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -342,7 +449,6 @@ class TestElo:
         per_game = calculate_elo_per_game(games)
         assert 1 in per_game
         h_elo, a_elo = per_game[1]
-        # Vor dem ersten Spiel sollten beide bei 1500 starten
         assert h_elo == pytest.approx(1500.0)
         assert a_elo == pytest.approx(1500.0)
 
