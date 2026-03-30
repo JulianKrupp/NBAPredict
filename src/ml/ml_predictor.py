@@ -1,10 +1,11 @@
 """
-ML-basierter Spielvorhersager (v3).
+ML-basierter Spielvorhersager (v4).
 
 Nutzt das trainierte Modell für Wahrscheinlichkeitsvorhersagen
 und kombiniert dessen Ergebnis mit dem regelbasierten Predictor.
 
-v3: Elo-Rating als Feature (46 statt 43 Features).
+v4: odds_implied_home_prob aus Feature-Vektor entfernt (45 statt 46 Features).
+    Elo-Rating weiterhin als Feature.
 """
 
 from __future__ import annotations
@@ -195,16 +196,15 @@ class MLPredictor:
         odds: GameOdds | None,
     ) -> list[float]:
         """
-        Erstellt den Feature-Vektor für das ML-Modell (46 Features).
+        Erstellt den Feature-Vektor für das ML-Modell (45 Features).
+
+        v4: odds_implied_home_prob ENTFERNT – war im Training immer 0.5,
+        daher lernte das Modell nichts daraus. Bei Predict-Time kamen dann
+        echte Quoten rein → Train/Predict-Mismatch.
 
         WICHTIG: Die Reihenfolge MUSS exakt mit
         TrainingSample.get_feature_columns() übereinstimmen!
         """
-        odds_prob = 0.5
-        if odds is not None:
-            total = odds.implied_home_probability + odds.implied_away_probability
-            odds_prob = odds.implied_home_probability / total if total > 0 else 0.5
-
         home_elo = self._get_team_elo(home.name)
         away_elo = self._get_team_elo(away.name)
 
@@ -262,8 +262,7 @@ class MLPredictor:
             away_elo,
             home_elo - away_elo,
 
-            # ── Wettquoten (1 Feature) ───────────────────────────────
-            odds_prob,
+            # v4: KEIN odds_implied_home_prob mehr!
         ]
 
     def _get_team_elo(self, team_name: str) -> float:
