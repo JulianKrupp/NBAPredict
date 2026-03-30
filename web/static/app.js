@@ -976,3 +976,282 @@ function updateTeamList() {
   initScores();
   loadStandings();
 })();
+
+// ── Periode abschließen ──────────────────────────────
+
+async function closePeriod() {
+  const label = prompt('Perioden-Label (optional, z.B. "v3-endstand"):');
+  if (label === null) return; // Abbruch
+  const notes = prompt('Notizen (optional):') || '';
+
+  try {
+    const res = await fetch(API + '/api/bets/close-period', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: label || undefined, notes }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      alert(
+        `Periode #${data.period_id} abgeschlossen!\n` +
+        `Label: ${data.label}\n` +
+        `Wetten: ${data.bets_closed}\n` +
+        `Win-Rate: ${(data.win_rate * 100).toFixed(1)}%\n` +
+        `Profit: ${data.profit >= 0 ? '+' : ''}${data.profit.toFixed(2)}\n` +
+        `ROI: ${data.roi.toFixed(1)}%`
+      );
+      loadVersionComparison();
+    } else {
+      alert('Fehler: ' + (data.error || 'Unbekannt'));
+    }
+  } catch (e) {
+    alert('Fehler: ' + e.message);
+  }
+}
+
+
+// ── Versionen laden ──────────────────────────────────
+
+async function loadVersionComparison() {
+  const el = document.getElementById('bets-tab-versions');
+  if (!el) return;
+  el.innerHTML = loadingHtml('Lade Versionen...');
+
+  try {
+    const [versions, periods, verRes] = await Promise.all([
+      apiFetch('/api/bets/versions'),
+      apiFetch('/api/bets/periods'),
+      apiFetch('/api/model/version'),
+    ]);
+
+    const currentVersion = verRes.version || 'unknown';
+
+    if (!versions.length && !periods.length) {
+      el.innerHTML = `
+        <div class="empty-msg">
+          <div class="empty-icon">📊</div>
+          <div class="empty-text">Noch keine Wetten zum Vergleichen</div>
+          <div style="font-size:12px;color:var(--text3);margin-top:8px">
+            Aktive Version: <code>${currentVersion}</code>
+          </div>
+        </div>`;
+      return;
+    }
+
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div>
+          <span style="font-size:12px;color:var(--text3);font-family:var(--mono)">
+            Aktive Version: <strong>${currentVersion}</strong>
+          </span>
+        </div>
+        <button onclick="closePeriod()">Periode abschließen</button>
+      </div>
+
+      ${versions.length ? renderVersionsTable(versions) : ''}
+      ${periods.length ? renderPeriodsTable(periods) : ''}
+      ${versions.length >= 2 ? renderCompareSelector(versions) : ''}
+      <div id="version-compare-result"></div>
+    `;
+  } catch (e) {
+    el.innerHTML = errorHtml(e.message);
+  }
+}
+
+
+// ── Versionen-Tabelle ────────────────────────────────
+
+function renderVersionsTable(versions) {
+  const rows = versions.map(v => {
+    const profitColor = v.profit >= 0 ? 'var(--green)' : 'var(--red)';
+    const roiColor = v.roi >= 0 ? 'var(--green)' : 'var(--red)';
+    return `
+      <tr>
+        <td style="font-family:var(--mono);font-size:12px;font-weight:700">${v.version}</td>
+        <td>${v.bets}</td>
+        <td>${v.won}W / ${v.lost}L</td>
+        <td>${(v.win_rate * 100).toFixed(1)}%</td>
+        <td style="color:${profitColor};font-weight:700">${v.profit >= 0 ? '+' : ''}${v.profit.toFixed(2)}</td>
+        <td style="color:${roiColor}">${v.roi >= 0 ? '+' : ''}${v.roi.toFixed(1)}%</td>
+        <td>${v.brier.toFixed(4)}</td>
+        <td style="font-size:11px;color:var(--text3)">${v.first_bet} – ${v.last_bet}</td>
+      </tr>`;
+  }).join('');
+
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Modellversionen</div>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);text-align:left">
+              <th style="padding:8px 6px">Version</th>
+              <th style="padding:8px 6px">Wetten</th>
+              <th style="padding:8px 6px">Bilanz</th>
+              <th style="padding:8px 6px">Win%</th>
+              <th style="padding:8px 6px">Profit</th>
+              <th style="padding:8px 6px">ROI</th>
+              <th style="padding:8px 6px">Brier</th>
+              <th style="padding:8px 6px">Zeitraum</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+
+// ── Perioden-Tabelle ─────────────────────────────────
+
+function renderPeriodsTable(periods) {
+  const rows = periods.map(p => {
+    const profitColor = p.profit >= 0 ? 'var(--green)' : 'var(--red)';
+    return `
+      <tr>
+        <td style="font-weight:700">#${p.period_id}</td>
+        <td style="font-family:var(--mono);font-size:11px">${p.label}</td>
+        <td style="font-family:var(--mono);font-size:11px">${p.model_version}</td>
+        <td>${p.bets}</td>
+        <td>${(p.win_rate * 100).toFixed(1)}%</td>
+        <td style="color:${profitColor};font-weight:700">${p.profit >= 0 ? '+' : ''}${p.profit.toFixed(2)}</td>
+        <td>${p.roi >= 0 ? '+' : ''}${p.roi.toFixed(1)}%</td>
+        <td style="font-size:11px;color:var(--text3)">${p.closed_at?.slice(0, 10) || '–'}</td>
+        <td style="font-size:11px;color:var(--text3)">${p.notes || '–'}</td>
+      </tr>`;
+  }).join('');
+
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Abgeschlossene Perioden</div>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);text-align:left">
+              <th style="padding:8px 6px">ID</th>
+              <th style="padding:8px 6px">Label</th>
+              <th style="padding:8px 6px">Version</th>
+              <th style="padding:8px 6px">Wetten</th>
+              <th style="padding:8px 6px">Win%</th>
+              <th style="padding:8px 6px">Profit</th>
+              <th style="padding:8px 6px">ROI</th>
+              <th style="padding:8px 6px">Geschlossen</th>
+              <th style="padding:8px 6px">Notizen</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+
+// ── Vergleichs-Selector ──────────────────────────────
+
+function renderCompareSelector(versions) {
+  const opts = versions.map(v =>
+    `<option value="${v.version}">${v.version} (${v.bets} Wetten)</option>`
+  ).join('');
+
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Direktvergleich</div>
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+        <div style="flex:1;min-width:160px">
+          <label style="font-size:12px;color:var(--text3)">Version A</label>
+          <select id="compare-v1" style="width:100%">${opts}</select>
+        </div>
+        <div style="font-size:18px;color:var(--text3);padding-bottom:6px">vs</div>
+        <div style="flex:1;min-width:160px">
+          <label style="font-size:12px;color:var(--text3)">Version B</label>
+          <select id="compare-v2" style="width:100%">${opts}</select>
+        </div>
+        <button onclick="runVersionCompare()">Vergleichen</button>
+      </div>
+    </div>`;
+}
+
+
+// ── Vergleich ausführen ──────────────────────────────
+
+async function runVersionCompare() {
+  const v1 = document.getElementById('compare-v1')?.value;
+  const v2 = document.getElementById('compare-v2')?.value;
+  const el = document.getElementById('version-compare-result');
+  if (!v1 || !v2 || !el) return;
+  if (v1 === v2) { alert('Bitte zwei verschiedene Versionen wählen.'); return; }
+
+  el.innerHTML = loadingHtml('Vergleiche...');
+  try {
+    const data = await apiFetch(`/api/bets/version-compare?v1=${encodeURIComponent(v1)}&v2=${encodeURIComponent(v2)}`);
+    el.innerHTML = renderVersionCompare(data);
+  } catch (e) {
+    el.innerHTML = errorHtml(e.message);
+  }
+}
+
+
+function renderVersionCompare(data) {
+  const { v1, v2, deltas, better } = data;
+
+  function deltaCell(key, suffix = '', invert = false) {
+    const d = deltas[key] || 0;
+    const positive = invert ? d < 0 : d > 0;
+    const color = d === 0 ? 'var(--text3)' : positive ? 'var(--green)' : 'var(--red)';
+    const sign = d > 0 ? '+' : '';
+    return `<span style="color:${color};font-weight:700">${sign}${typeof d === 'number' ? d.toFixed(4) : d}${suffix}</span>`;
+  }
+
+  function row(label, k1, k2, key, fmt, suffix = '', invert = false) {
+    return `
+      <tr>
+        <td style="font-weight:500;padding:6px 8px">${label}</td>
+        <td style="padding:6px 8px;font-family:var(--mono)">${fmt(k1)}</td>
+        <td style="padding:6px 8px;font-family:var(--mono)">${fmt(k2)}</td>
+        <td style="padding:6px 8px;text-align:center">${deltaCell(key, suffix, invert)}</td>
+      </tr>`;
+  }
+
+  const pct = v => (v * 100).toFixed(1) + '%';
+  const num = v => typeof v === 'number' ? v.toFixed(2) : v;
+  const num4 = v => typeof v === 'number' ? v.toFixed(4) : v;
+
+  const betterLabel = better === v1.version ? v1.version : v2.version;
+
+  return `
+    <div class="card">
+      <div class="card-title">${v1.version} vs ${v2.version}</div>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);text-align:left">
+              <th style="padding:8px">Metrik</th>
+              <th style="padding:8px">${v1.version}</th>
+              <th style="padding:8px">${v2.version}</th>
+              <th style="padding:8px;text-align:center">Delta</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="padding:6px 8px">Wetten</td>
+              <td style="padding:6px 8px">${v1.bets}</td>
+              <td style="padding:6px 8px">${v2.bets}</td>
+              <td></td>
+            </tr>
+            ${row('Win-Rate', v1.win_rate, v2.win_rate, 'win_rate', pct)}
+            ${row('Profit', v1.profit, v2.profit, 'profit', num)}
+            ${row('ROI', v1.roi, v2.roi, 'roi', num, '%')}
+            ${row('Brier Score', v1.brier, v2.brier, 'brier', num4, '', true)}
+            ${row('Avg Edge', v1.avg_edge, v2.avg_edge, 'avg_edge', num4)}
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:12px;padding:10px 14px;background:var(--bg2);border-radius:8px;display:flex;align-items:center;gap:10px">
+        <span style="font-size:18px">🏆</span>
+        <div>
+          <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px">Profitabler</div>
+          <div style="font-weight:700;font-family:var(--mono)">${betterLabel}</div>
+        </div>
+      </div>
+    </div>`;
+}

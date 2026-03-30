@@ -5,11 +5,17 @@ Speichert virtuelle Wetten in einer SQLite-Datenbank und berechnet
 Gewinn/Verlust, ROI und umfassende Effektivitäts-Statistiken.
 Kein echtes Geld.
 
+v2: Modellversion-Tracking & Perioden-Vergleich
+  - Jede Wette speichert die aktive Modellversion (z.B. "v3", "v4")
+  - Perioden können "abgeschlossen" werden → Snapshot der Ergebnisse
+  - Versionsvergleich: Accuracy, ROI, Brier pro Modellversion
+
 Datenbank: data/betting/bets.db
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from collections import defaultdict
@@ -22,7 +28,23 @@ logger = logging.getLogger(__name__)
 
 DB_DIR = Path("data/betting")
 DB_PATH = DB_DIR / "bets.db"
+METRICS_PATH = Path("data/models/model_metrics.json")
 DEFAULT_STAKE = 10.0
+
+
+def _current_model_version() -> str:
+    """Liest die aktive Modellversion aus model_metrics.json."""
+    try:
+        if METRICS_PATH.exists():
+            with open(METRICS_PATH, encoding="utf-8") as f:
+                m = json.load(f)
+            fc = m.get("feature_count", "?")
+            acc = round(m.get("accuracy", 0) * 100)
+            name = m.get("model_name", "unknown")[:6]
+            return f"{name}_f{fc}_a{acc}"
+    except Exception:
+        pass
+    return "unknown"
 
 
 @dataclass
@@ -46,6 +68,8 @@ class Bet:
     profit: float = 0.0
     placed_at: str = ""
     resolved_at: str | None = None
+    model_version: str = "unknown"
+    period_id: int | None = None
 
     @property
     def is_open(self) -> bool:
@@ -100,26 +124,35 @@ class BettingTracker:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
-    # ── CRUD ──────────────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
+    #  CRUD
+    # ══════════════════════════════════════════════════════════════════════
 
-    def place_bet(self, home_team: str, away_team: str, bet_on: str,
-                  bet_side: str, odds: float, ml_prob: float,
-                  odds_prob: float, edge: float, ev: float,
-                  bet_rating: str, stake: float = DEFAULT_STAKE) -> Bet:
+    def place_bet(
+        self, home_team: str, away_team: str, bet_on: str,
+        bet_side: str, odds: float, ml_prob: float,
+        odds_prob: float, edge: float, ev: float,
+        bet_rating: str, stake: float = DEFAULT_STAKE,
+        model_version: str | None = None,
+    ) -> Bet:
         now = datetime.now().isoformat(timespec="seconds")
+        version = model_version or _current_model_version()
         with self._connect() as conn:
             cur = conn.execute(
                 "INSERT INTO bets (home_team,away_team,bet_on,bet_side,"
                 "odds,stake,ml_prob,odds_prob,edge,ev,bet_rating,"
-                "status,payout,profit,placed_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,'open',0,0,?)",
+                "status,payout,profit,placed_at,model_version) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,'open',0,0,?,?)",
                 (home_team, away_team, bet_on, bet_side, odds, stake,
-                 ml_prob, odds_prob, edge, ev, bet_rating, now))
+                 ml_prob, odds_prob, edge, ev, bet_rating, now, version))
             bid = cur.lastrowid
-        return Bet(id=bid, home_team=home_team, away_team=away_team,
-                   bet_on=bet_on, bet_side=bet_side, odds=odds, stake=stake,
-                   ml_prob=ml_prob, odds_prob=odds_prob, edge=edge, ev=ev,
-                   bet_rating=bet_rating, status="open", placed_at=now)
+        return Bet(
+            id=bid, home_team=home_team, away_team=away_team,
+            bet_on=bet_on, bet_side=bet_side, odds=odds, stake=stake,
+            ml_prob=ml_prob, odds_prob=odds_prob, edge=edge, ev=ev,
+            bet_rating=bet_rating, status="open", placed_at=now,
+            model_version=version,
+        )
 
     def resolve_bet(self, bet_id: int, actual_winner: str) -> Bet | None:
         bet = self.get_bet(bet_id)
@@ -146,7 +179,9 @@ class BettingTracker:
 
     def get_open_bets(self) -> list[Bet]:
         with self._connect() as c:
-            rows = c.execute("SELECT * FROM bets WHERE status='open' ORDER BY placed_at DESC").fetchall()
+            rows = c.execute(
+                "SELECT * FROM bets WHERE status='open' ORDER BY placed_at DESC"
+            ).fetchall()
         return [self._row_to_bet(r) for r in rows]
 
     def get_all_bets(self, limit: int = 100, status: str | None = None) -> list[Bet]:
@@ -167,10 +202,223 @@ class BettingTracker:
     def reset(self) -> int:
         with self._connect() as c:
             n = c.execute("DELETE FROM bets").rowcount
-        logger.warning("Alle %d Wetten gelöscht.", n)
+            c.execute("DELETE FROM periods")
+        logger.warning("Alle %d Wetten und Perioden gelöscht.", n)
         return n
 
-    # ── Basis-Statistiken ─────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
+    #  PERIODEN: Wetten abschließen
+    # ══════════════════════════════════════════════════════════════════════
+
+    def close_period(self, label: str | None = None, notes: str = "") -> dict:
+        """
+        Schließt die aktuelle Wettperiode ab.
+
+        Alle aufgelösten Wetten ohne period_id bekommen die neue Periode
+        zugewiesen. Offene Wetten werden NICHT betroffen.
+
+        Args:
+            label: Optionaler Name (z.B. "v3-endstand", "v4-erste-woche").
+                   Default: automatisch aus Modellversion + Datum.
+            notes: Optionale Notizen zur Periode.
+
+        Returns:
+            Dict mit Perioden-Info und Zusammenfassung.
+        """
+        now = datetime.now().isoformat(timespec="seconds")
+        version = _current_model_version()
+        auto_label = label or f"{version}_{now[:10]}"
+
+        with self._connect() as conn:
+            # Periode erstellen
+            cur = conn.execute(
+                "INSERT INTO periods (label, model_version, closed_at, notes) "
+                "VALUES (?, ?, ?, ?)",
+                (auto_label, version, now, notes))
+            period_id = cur.lastrowid
+
+            # Alle aufgelösten Wetten ohne Periode zuordnen
+            affected = conn.execute(
+                "UPDATE bets SET period_id = ? "
+                "WHERE status != 'open' AND period_id IS NULL",
+                (period_id,)).rowcount
+
+        # Zusammenfassung berechnen
+        summary = self._period_summary(period_id)
+        summary["period_id"] = period_id
+        summary["label"] = auto_label
+        summary["model_version"] = version
+        summary["closed_at"] = now
+        summary["notes"] = notes
+        summary["bets_closed"] = affected
+
+        logger.info(
+            "Periode #%d abgeschlossen: %d Wetten (%s)",
+            period_id, affected, auto_label,
+        )
+        return summary
+
+    def get_periods(self) -> list[dict]:
+        """Gibt alle abgeschlossenen Perioden mit Zusammenfassung zurück."""
+        with self._connect() as c:
+            rows = c.execute(
+                "SELECT * FROM periods ORDER BY closed_at DESC"
+            ).fetchall()
+
+        periods = []
+        for row in rows:
+            pid = row["id"]
+            summary = self._period_summary(pid)
+            summary["period_id"] = pid
+            summary["label"] = row["label"]
+            summary["model_version"] = row["model_version"]
+            summary["closed_at"] = row["closed_at"]
+            summary["notes"] = row["notes"] or ""
+            periods.append(summary)
+        return periods
+
+    def _period_summary(self, period_id: int) -> dict:
+        """Berechnet die Zusammenfassung einer Periode."""
+        with self._connect() as c:
+            rows = c.execute(
+                "SELECT * FROM bets WHERE period_id = ?", (period_id,)
+            ).fetchall()
+
+        bets = [self._row_to_bet(r) for r in rows]
+        resolved = [b for b in bets if b.status != "open"]
+
+        if not resolved:
+            return {"bets": 0, "won": 0, "lost": 0, "win_rate": 0,
+                    "profit": 0, "roi": 0, "avg_odds": 0, "avg_edge": 0,
+                    "brier": 0}
+
+        won = sum(1 for b in resolved if b.is_won)
+        staked = sum(b.stake for b in resolved)
+        profit = sum(b.profit for b in resolved)
+
+        # Brier Score der Wetten (wie gut die ML-Wahrscheinlichkeiten waren)
+        brier = self._calc_brier(resolved)
+
+        return {
+            "bets": len(resolved),
+            "won": won,
+            "lost": len(resolved) - won,
+            "win_rate": round(won / len(resolved), 4),
+            "profit": round(profit, 2),
+            "roi": round(profit / staked * 100, 2) if staked else 0,
+            "avg_odds": round(sum(b.odds for b in resolved) / len(resolved), 2),
+            "avg_edge": round(sum(b.edge for b in resolved) / len(resolved), 4),
+            "brier": round(brier, 4),
+        }
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  VERSIONSVERGLEICH
+    # ══════════════════════════════════════════════════════════════════════
+
+    def get_versions(self) -> list[dict]:
+        """
+        Listet alle Modellversionen mit Wett-Statistiken auf.
+
+        Gruppiert ALLE aufgelösten Wetten (nicht nur abgeschlossene Perioden)
+        nach model_version.
+        """
+        with self._connect() as c:
+            rows = c.execute(
+                "SELECT * FROM bets WHERE status != 'open' ORDER BY placed_at ASC"
+            ).fetchall()
+
+        bets = [self._row_to_bet(r) for r in rows]
+        by_version: dict[str, list[Bet]] = defaultdict(list)
+        for b in bets:
+            by_version[b.model_version].append(b)
+
+        versions = []
+        for version, vbets in sorted(by_version.items()):
+            won = sum(1 for b in vbets if b.is_won)
+            staked = sum(b.stake for b in vbets)
+            profit = sum(b.profit for b in vbets)
+            brier = self._calc_brier(vbets)
+
+            # Datumsbereich
+            dates = [b.placed_at[:10] for b in vbets if b.placed_at]
+            first = min(dates) if dates else "?"
+            last = max(dates) if dates else "?"
+
+            versions.append({
+                "version": version,
+                "bets": len(vbets),
+                "won": won,
+                "lost": len(vbets) - won,
+                "win_rate": round(won / len(vbets), 4),
+                "profit": round(profit, 2),
+                "roi": round(profit / staked * 100, 2) if staked else 0,
+                "avg_odds": round(sum(b.odds for b in vbets) / len(vbets), 2),
+                "avg_edge": round(sum(b.edge for b in vbets) / len(vbets), 4),
+                "brier": round(brier, 4),
+                "first_bet": first,
+                "last_bet": last,
+            })
+        return versions
+
+    def get_version_comparison(self, v1: str, v2: str) -> dict:
+        """
+        Vergleicht zwei Modellversionen direkt.
+
+        Args:
+            v1: Erste Version (z.B. "LogReg_f46_a70")
+            v2: Zweite Version (z.B. "LogReg_f45_a65")
+
+        Returns:
+            Dict mit Side-by-Side-Vergleich und Deltas.
+        """
+        with self._connect() as c:
+            rows1 = c.execute(
+                "SELECT * FROM bets WHERE model_version=? AND status!='open'",
+                (v1,)).fetchall()
+            rows2 = c.execute(
+                "SELECT * FROM bets WHERE model_version=? AND status!='open'",
+                (v2,)).fetchall()
+
+        def stats_for(rows):
+            bets = [self._row_to_bet(r) for r in rows]
+            if not bets:
+                return {"bets": 0, "won": 0, "lost": 0, "win_rate": 0,
+                        "profit": 0, "roi": 0, "brier": 0, "avg_odds": 0,
+                        "avg_edge": 0, "calibration": []}
+            won = sum(1 for b in bets if b.is_won)
+            staked = sum(b.stake for b in bets)
+            profit = sum(b.profit for b in bets)
+            return {
+                "bets": len(bets),
+                "won": won,
+                "lost": len(bets) - won,
+                "win_rate": round(won / len(bets), 4),
+                "profit": round(profit, 2),
+                "roi": round(profit / staked * 100, 2) if staked else 0,
+                "brier": round(self._calc_brier(bets), 4),
+                "avg_odds": round(sum(b.odds for b in bets) / len(bets), 2),
+                "avg_edge": round(sum(b.edge for b in bets) / len(bets), 4),
+                "calibration": self._calibration(bets),
+            }
+
+        s1 = stats_for(rows1)
+        s2 = stats_for(rows2)
+
+        # Deltas berechnen
+        deltas = {}
+        for key in ("win_rate", "profit", "roi", "brier", "avg_edge"):
+            deltas[key] = round(s2[key] - s1[key], 4)
+
+        return {
+            "v1": {"version": v1, **s1},
+            "v2": {"version": v2, **s2},
+            "deltas": deltas,
+            "better": v2 if deltas.get("profit", 0) > 0 else v1,
+        }
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  BASIS-STATISTIKEN
+    # ══════════════════════════════════════════════════════════════════════
 
     def get_stats(self) -> BettingStats:
         bets = self._all_bets_sorted()
@@ -212,13 +460,19 @@ class BettingTracker:
     def get_profit_history(self) -> list[dict]:
         with self._connect() as c:
             rows = c.execute(
-                "SELECT placed_at,profit,status FROM bets WHERE status!='open' ORDER BY resolved_at ASC"
+                "SELECT placed_at,profit,status,model_version FROM bets "
+                "WHERE status!='open' ORDER BY resolved_at ASC"
             ).fetchall()
         history, cum = [], 0.0
         for r in rows:
             cum += r["profit"]
-            history.append({"date": r["placed_at"][:10], "profit": round(r["profit"], 2),
-                            "cumulative": round(cum, 2), "result": r["status"]})
+            history.append({
+                "date": r["placed_at"][:10],
+                "profit": round(r["profit"], 2),
+                "cumulative": round(cum, 2),
+                "result": r["status"],
+                "version": r["model_version"],
+            })
         return history
 
     # ══════════════════════════════════════════════════════════════════════
@@ -226,23 +480,7 @@ class BettingTracker:
     # ══════════════════════════════════════════════════════════════════════
 
     def get_analytics(self) -> dict:
-        """
-        Umfassende Effektivitäts-Analyse aller aufgelösten Wetten.
-
-        Dimensionen:
-          profit_history     – Kumulativer Profitverlauf (Chartdaten)
-          by_rating          – Bilanz pro Empfehlungsstufe
-          by_team            – Bilanz pro gewettetem Team
-          by_side            – Heim vs Auswärts
-          by_odds_range      – Nach Quotenbereich (1.0–1.5, 1.5–2.0, …)
-          by_edge_range      – Nach Edge-Bereich (0–5%, 5–10%, …)
-          calibration        – KI-Wahrsch. vs tatsächliche Win-Rate
-          expected_vs_actual – Erwarteter (EV) vs realer Profit
-          weekly             – Wöchentlicher Verlauf
-          kelly_analysis     – Kelly-Criterion-Simulation
-          avg_profit_won     – Ø Gewinn pro gewonnener Wette
-          avg_profit_lost    – Ø Verlust pro verlorener Wette
-        """
+        """Umfassende Effektivitäts-Analyse aller aufgelösten Wetten."""
         resolved = [b for b in self._all_bets_sorted() if b.status != "open"]
         if not resolved:
             return {"empty": True}
@@ -266,11 +504,25 @@ class BettingTracker:
             "avg_profit_lost":    round(sum(b.profit for b in lost_list) / len(lost_list), 2) if lost_list else 0,
         }
 
-    # ── Analyse-Helfer ────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
+    #  ANALYSE-HELFER
+    # ══════════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _calc_brier(bets: list[Bet]) -> float:
+        """Berechnet den Brier Score für aufgelöste Wetten."""
+        if not bets:
+            return 0.0
+        total = 0.0
+        for b in bets:
+            # ml_prob ist die Wahrscheinlichkeit für das gewettete Team
+            actual = 1.0 if b.is_won else 0.0
+            total += (b.ml_prob - actual) ** 2
+        return total / len(bets)
 
     def _by_rating(self, resolved: list[Bet]) -> list[dict]:
-        labels = {"strong": "🔥 Stark", "good": "✅ Gut",
-                  "slight": "💡 Leicht", "none": "⏸️ Kein"}
+        labels = {"strong": "Stark", "good": "Gut",
+                  "slight": "Leicht", "none": "Kein"}
         result = []
         for rat in ("strong", "good", "slight", "none"):
             group = [b for b in resolved if b.bet_rating == rat]
@@ -327,14 +579,14 @@ class BettingTracker:
 
     def _by_odds_range(self, resolved: list[Bet]) -> list[dict]:
         return self._group_by_range(resolved, [
-            ("1.00–1.50", 1.0, 1.5), ("1.50–2.00", 1.5, 2.0),
-            ("2.00–2.50", 2.0, 2.5), ("2.50–3.50", 2.5, 3.5),
+            ("1.00-1.50", 1.0, 1.5), ("1.50-2.00", 1.5, 2.0),
+            ("2.00-2.50", 2.0, 2.5), ("2.50-3.50", 2.5, 3.5),
             ("3.50+", 3.5, 99.0)], key=lambda b: b.odds)
 
     def _by_edge_range(self, resolved: list[Bet]) -> list[dict]:
         return self._group_by_range(resolved, [
-            ("0–5%", 0.0, 0.05), ("5–10%", 0.05, 0.10),
-            ("10–15%", 0.10, 0.15), ("15–20%", 0.15, 0.20),
+            ("0-5%", 0.0, 0.05), ("5-10%", 0.05, 0.10),
+            ("10-15%", 0.10, 0.15), ("15-20%", 0.15, 0.20),
             ("20%+", 0.20, 1.0)], key=lambda b: b.edge)
 
     def _calibration(self, resolved: list[Bet]) -> list[dict]:
@@ -342,7 +594,7 @@ class BettingTracker:
         buckets: dict[str, list[Bet]] = defaultdict(list)
         for b in resolved:
             bk = max(0, min(90, int(b.ml_prob * 10) * 10))
-            buckets[f"{bk}–{bk + 10}%"].append(b)
+            buckets[f"{bk}-{bk + 10}%"].append(b)
         out = []
         for label in sorted(buckets):
             g = buckets[label]
@@ -392,7 +644,7 @@ class BettingTracker:
         return out
 
     def _kelly(self, resolved: list[Bet]) -> dict:
-        """Kelly-Criterion-Simulation: Was wäre mit optimalem Einsatz passiert?"""
+        """Kelly-Criterion-Simulation."""
         entries = []
         bankroll = 1000.0
         cum_kelly = 0.0
@@ -426,7 +678,9 @@ class BettingTracker:
             "flat_total_profit": round(cum_flat, 2),
             "entries": entries}
 
-    # ── Interne Helfer ────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
+    #  INTERNE HELFER
+    # ══════════════════════════════════════════════════════════════════════
 
     @staticmethod
     def _group_by_range(bets, ranges, key) -> list[dict]:
@@ -447,6 +701,17 @@ class BettingTracker:
                 "avg_odds": round(sum(b.odds for b in g) / len(g), 2)})
         return out
 
+    @staticmethod
+    def _calc_streaks(resolved: list[Bet]) -> tuple[int, int]:
+        if not resolved:
+            return 0, 0
+        best, cur = 0, 0
+        for b in resolved:
+            cur = (cur + 1 if cur > 0 else 1) if b.is_won else (cur - 1 if cur < 0 else -1)
+            if cur > best:
+                best = cur
+        return best, cur
+
     def _all_bets_sorted(self) -> list[Bet]:
         with self._connect() as c:
             rows = c.execute("SELECT * FROM bets ORDER BY placed_at ASC").fetchall()
@@ -460,6 +725,7 @@ class BettingTracker:
 
     def _init_db(self) -> None:
         with self._connect() as c:
+            # Bets-Tabelle (v1-kompatibel + v2-Spalten)
             c.execute("""CREATE TABLE IF NOT EXISTS bets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 home_team TEXT NOT NULL, away_team TEXT NOT NULL,
@@ -471,23 +737,62 @@ class BettingTracker:
                 status TEXT NOT NULL DEFAULT 'open',
                 actual_winner TEXT, payout REAL NOT NULL DEFAULT 0,
                 profit REAL NOT NULL DEFAULT 0,
-                placed_at TEXT NOT NULL, resolved_at TEXT)""")
+                placed_at TEXT NOT NULL, resolved_at TEXT,
+                model_version TEXT NOT NULL DEFAULT 'unknown',
+                period_id INTEGER)""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_bets_status ON bets(status)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_bets_version ON bets(model_version)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_bets_period ON bets(period_id)")
+
+            # Perioden-Tabelle (NEU in v2)
+            c.execute("""CREATE TABLE IF NOT EXISTS periods (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT NOT NULL,
+                model_version TEXT NOT NULL,
+                closed_at TEXT NOT NULL,
+                notes TEXT)""")
+
+            # Migration: model_version + period_id zu bestehenden Wetten
+            self._migrate_v2(c)
+
+    @staticmethod
+    def _migrate_v2(conn: sqlite3.Connection) -> None:
+        """Fügt v2-Spalten hinzu falls sie fehlen (bestehende DB)."""
+        try:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(bets)").fetchall()}
+            if "model_version" not in cols:
+                conn.execute(
+                    "ALTER TABLE bets ADD COLUMN model_version TEXT NOT NULL DEFAULT 'v3_legacy'")
+                logger.info("Migration: model_version-Spalte zu bets hinzugefügt.")
+            if "period_id" not in cols:
+                conn.execute(
+                    "ALTER TABLE bets ADD COLUMN period_id INTEGER")
+                logger.info("Migration: period_id-Spalte zu bets hinzugefügt.")
+        except Exception as exc:
+            logger.debug("Migration-Check: %s", exc)
 
     @staticmethod
     def _row_to_bet(row: sqlite3.Row) -> Bet:
-        return Bet(**{k: row[k] for k in (
-            "id", "home_team", "away_team", "bet_on", "bet_side", "odds",
-            "stake", "ml_prob", "odds_prob", "edge", "ev", "bet_rating",
-            "status", "actual_winner", "payout", "profit", "placed_at", "resolved_at")})
-
-    @staticmethod
-    def _calc_streaks(resolved: list[Bet]) -> tuple[int, int]:
-        if not resolved:
-            return 0, 0
-        best, cur = 0, 0
-        for b in resolved:
-            cur = (cur + 1 if cur > 0 else 1) if b.is_won else (cur - 1 if cur < 0 else -1)
-            if cur > best:
-                best = cur
-        return best, cur
+        keys = set(row.keys())
+        return Bet(
+            id=row["id"],
+            home_team=row["home_team"],
+            away_team=row["away_team"],
+            bet_on=row["bet_on"],
+            bet_side=row["bet_side"],
+            odds=row["odds"],
+            stake=row["stake"],
+            ml_prob=row["ml_prob"],
+            odds_prob=row["odds_prob"],
+            edge=row["edge"],
+            ev=row["ev"],
+            bet_rating=row["bet_rating"],
+            status=row["status"],
+            actual_winner=row["actual_winner"],
+            payout=row["payout"],
+            profit=row["profit"],
+            placed_at=row["placed_at"],
+            resolved_at=row["resolved_at"],
+            model_version=row["model_version"] if "model_version" in keys else "unknown",
+            period_id=row["period_id"] if "period_id" in keys else None,
+        )

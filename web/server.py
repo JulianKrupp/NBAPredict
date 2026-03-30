@@ -318,6 +318,7 @@ def get_bets():
             "actual_winner": b.actual_winner,
             "payout": round(b.payout, 2), "profit": round(b.profit, 2),
             "placed_at": b.placed_at, "resolved_at": b.resolved_at,
+            "model_version": b.model_version, "period_id": b.period_id,
         } for b in bets])
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
@@ -341,6 +342,7 @@ def place_bet():
             odds_prob=float(data["odds_prob"]), edge=float(data["edge"]),
             ev=float(data["ev"]), bet_rating=data["bet_rating"],
             stake=float(data.get("stake", 10.0)),
+            model_version=data.get("model_version"),
         )
         return jsonify({"success": True, "bet_id": bet.id})
     except Exception as exc:
@@ -382,6 +384,78 @@ def bet_analytics():
     except Exception as exc:
         logger.error("Analytics-Fehler: %s", exc)
         return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/bets/close-period", methods=["POST"])
+def close_period():
+    """
+    Schließt die aktuelle Wettperiode ab.
+
+    Alle aufgelösten Wetten ohne Periode werden der neuen Periode zugeordnet.
+    Body (optional): { "label": "v3-endstand", "notes": "Vor Data-Leakage-Fix" }
+    """
+    data = request.get_json() or {}
+    label = data.get("label")
+    notes = data.get("notes", "")
+    try:
+        result = bet_tracker.close_period(label=label, notes=notes)
+        return jsonify({"success": True, **result})
+    except Exception as exc:
+        logger.error("Periode-Fehler: %s", exc)
+        return jsonify({"error": str(exc)}), 500
+
+
+# ── API: Perioden auflisten ───────────────────────────────────────────────────
+
+@app.route("/api/bets/periods")
+def get_periods():
+    """Gibt alle abgeschlossenen Perioden mit Zusammenfassung zurück."""
+    try:
+        return jsonify(bet_tracker.get_periods())
+    except Exception as exc:
+        logger.error("Perioden-Fehler: %s", exc)
+        return jsonify({"error": str(exc)}), 500
+
+
+# ── API: Modellversionen auflisten ────────────────────────────────────────────
+
+@app.route("/api/bets/versions")
+def get_versions():
+    """Listet alle Modellversionen mit Wett-Statistiken auf."""
+    try:
+        return jsonify(bet_tracker.get_versions())
+    except Exception as exc:
+        logger.error("Versions-Fehler: %s", exc)
+        return jsonify({"error": str(exc)}), 500
+
+
+# ── API: Zwei Versionen vergleichen ───────────────────────────────────────────
+
+@app.route("/api/bets/version-compare")
+def version_compare():
+    """
+    Vergleicht zwei Modellversionen.
+    Query-Parameter: ?v1=LogReg_f46_a70&v2=LogReg_f45_a65
+    """
+    v1 = request.args.get("v1")
+    v2 = request.args.get("v2")
+    if not v1 or not v2:
+        return jsonify({"error": "Parameter v1 und v2 erforderlich"}), 400
+    try:
+        return jsonify(bet_tracker.get_version_comparison(v1, v2))
+    except Exception as exc:
+        logger.error("Vergleich-Fehler: %s", exc)
+        return jsonify({"error": str(exc)}), 500
+
+
+# ── API: Aktuelle Modellversion ───────────────────────────────────────────────
+
+@app.route("/api/model/version")
+def get_model_version():
+    """Gibt die aktuelle Modellversion zurück."""
+    from src.betting.tracker import _current_model_version
+    return jsonify({"version": _current_model_version()})
+
 
 
 # ── Start ─────────────────────────────────────────────────────────────────────
