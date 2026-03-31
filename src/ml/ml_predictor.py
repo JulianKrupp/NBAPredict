@@ -81,9 +81,6 @@ class MLPredictor:
         odds: GameOdds | None = None,
     ) -> MLPredictionResult:
         """Erstellt eine vollständige ML-gestützte Vorhersage."""
-        # Elo-Cache bei jeder neuen Vorhersage zurücksetzen
-        self._elo_cache = None
-
         # Advanced Stats laden
         home_adv = self._get_advanced_stats(home_team)
         away_adv = self._get_advanced_stats(away_team)

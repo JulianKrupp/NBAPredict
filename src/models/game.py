@@ -42,7 +42,11 @@ class Game:
         """
         if not self.is_final:
             return None
-        return self.home_team if self.home_score > self.away_score else self.away_team
+        if self.home_score > self.away_score:
+            return self.home_team
+        if self.away_score > self.home_score:
+            return self.away_team
+        return None
 
     @property
     def score_difference(self) -> int:

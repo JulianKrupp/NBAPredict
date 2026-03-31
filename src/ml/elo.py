@@ -5,12 +5,26 @@ Berechnet Elo-Ratings aus historischen Spielergebnissen.
 Zwei Modi:
   - Endgültige Ratings (für Vorhersagen mit aktuellem Stand)
   - Ratings pro Spiel (für Trainingsdaten – Elo VOR dem Spiel)
+
+Saisonaler Regression-to-Mean-Faktor (0.75): Am Saisonstart werden
+Elo-Ratings um 25% zur Mitte (1500) gezogen. Verhindert, dass schlechte
+Elo-Werte aus 2021 die Ratings von 2024 unverhältnismäßig beeinflussen.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
 from src.models.game import Game
+
+# Am Saisonstart wird (elo - 1500) um diesen Faktor reduziert.
+# 0.75 = 25% Regression zur Mitte; typischer Wert für NBA-Elo-Systeme.
+ELO_SEASON_REGRESSION = 0.75
+
+
+def _regress_to_mean(elo: dict[str, float]) -> None:
+    """Zieht alle Elo-Ratings am Saisonstart 25% Richtung 1500."""
+    for team in elo:
+        elo[team] = 1500.0 + (elo[team] - 1500.0) * ELO_SEASON_REGRESSION
 
 
 def calculate_elo_ratings(
@@ -21,6 +35,9 @@ def calculate_elo_ratings(
     """
     Berechnet finale Elo-Ratings aus einer Spielliste.
 
+    Bei Saisonwechsel wird ein Regression-to-Mean angewendet,
+    damit frühere Saisons den aktuellen Stand nicht übermäßig beeinflussen.
+
     Args:
         games:          Liste abgeschlossener Spiele.
         k:              K-Faktor (Lernrate). 20 ist NBA-Standard.
@@ -30,10 +47,15 @@ def calculate_elo_ratings(
         Dictionary: Teamname → aktuelles Elo-Rating.
     """
     elo: dict[str, float] = defaultdict(lambda: 1500.0)
+    current_season: int | None = None
 
     for game in sorted(games, key=lambda g: g.date):
         if not game.is_final or game.home_score == 0:
             continue
+        if game.season != current_season:
+            if current_season is not None:
+                _regress_to_mean(elo)
+            current_season = game.season
         _update_elo(elo, game, k, home_advantage)
 
     return dict(elo)
@@ -48,7 +70,8 @@ def calculate_elo_per_game(
     Berechnet Elo-Ratings ZUM ZEITPUNKT jedes Spiels (vor dem Update).
 
     Für Trainingsdaten: Das Elo-Rating das jedes Team hatte BEVOR
-    das Spiel gespielt wurde.
+    das Spiel gespielt wurde. Bei Saisonwechsel wird Regression-to-Mean
+    angewendet, bevor das erste Spiel der neuen Saison verarbeitet wird.
 
     Args:
         games:          Liste abgeschlossener Spiele.
@@ -60,10 +83,15 @@ def calculate_elo_per_game(
     """
     elo: dict[str, float] = defaultdict(lambda: 1500.0)
     elo_per_game: dict[int, tuple[float, float]] = {}
+    current_season: int | None = None
 
     for game in sorted(games, key=lambda g: g.date):
         if not game.is_final or game.home_score == 0:
             continue
+        if game.season != current_season:
+            if current_season is not None:
+                _regress_to_mean(elo)
+            current_season = game.season
 
         # Elo VOR dem Spiel speichern
         elo_per_game[game.game_id] = (

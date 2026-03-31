@@ -47,6 +47,24 @@ METADATA_PATH = Path("data/training/metadata.json")
 MIN_GAMES_THRESHOLD = 10
 
 
+def _compute_fatigue(days_rest: int, games_last_7: int) -> float:
+    """Berechnet Ermüdungswert identisch zu Team.fatigue_score.
+
+    Muss exakt dieselbe Logik wie Team.fatigue_score verwenden,
+    damit Training- und Vorhersage-Features übereinstimmen.
+    """
+    if days_rest >= 3:
+        rest_fatigue = 0.0
+    elif days_rest == 2:
+        rest_fatigue = 0.15
+    elif days_rest == 1:
+        rest_fatigue = 0.45
+    else:
+        rest_fatigue = 1.0
+    density_fatigue = min(1.0, max(0.0, (games_last_7 - 2) / 2.0))
+    return round(0.65 * rest_fatigue + 0.35 * density_fatigue, 4)
+
+
 @dataclass
 class TrainingSample:
     """
@@ -200,6 +218,11 @@ class _CumulativeTeamTracker:
         return self.away_wins / total if total else 0.5
 
     @property
+    def last_3_win_rate(self) -> float:
+        r = self.results[-3:]
+        return sum(r) / len(r) if r else self.win_rate
+
+    @property
     def last_5_win_rate(self) -> float:
         r = self.results[-5:]
         return sum(r) / len(r) if r else self.win_rate
@@ -225,15 +248,20 @@ class _CumulativeTeamTracker:
 
     @property
     def form_rating(self) -> float:
-        """Gewichtete Form aus letzten 5 Spielen."""
+        """Gewichtete Form: L3 (30%) + L5 (40%) + L10 (30%).
+
+        Identisch zu Team.form_rating – notwendig für konsistente
+        Train/Predict-Features.
+        """
         if not self.results:
             return 0.5
-        last_5 = self.results[-5:]
-        if len(last_5) < 3:
+        if len(self.results) < 3:
             return self.win_rate
-        weights = [0.1, 0.15, 0.2, 0.25, 0.3][-len(last_5):]
-        total_w = sum(weights)
-        return sum(w * (1.0 if r else 0.0) for w, r in zip(weights, last_5)) / total_w
+        return (
+            0.30 * self.last_3_win_rate
+            + 0.40 * self.last_5_win_rate
+            + 0.30 * self.last_10_win_rate
+        )
 
     def days_rest_before(self, game_date: str) -> int:
         """Ruhetage VOR einem bestimmten Spieldatum."""
@@ -263,9 +291,9 @@ class _CumulativeTeamTracker:
         pts = self.avg_pts_scored
         allowed = self.avg_pts_allowed
 
-        pace = 98.0 + (pts - 110.0) * 0.3
-        off_r = (pts / pace) * 100.0 if pace > 0 else 110.0
-        def_r = (allowed / pace) * 100.0 if pace > 0 else 110.0
+        pace = max(85.0, min(115.0, 98.0 + (pts - 110.0) * 0.3))
+        off_r = (pts / pace) * 100.0
+        def_r = (allowed / pace) * 100.0
 
         pts_factor = pts / 113.0
         ts = max(0.45, min(0.65, 0.555 + (pts_factor - 1.0) * 0.05))
@@ -367,8 +395,8 @@ def build_samples_cumulative(
         a_rest = at.days_rest_before(game.date)
         h_g7 = ht.games_last_7_days_before(game.date)
         a_g7 = at.games_last_7_days_before(game.date)
-        h_fat = round(h_g7 * 0.15 - h_rest * 0.05, 4)
-        a_fat = round(a_g7 * 0.15 - a_rest * 0.05, 4)
+        h_fat = _compute_fatigue(h_rest, h_g7)
+        a_fat = _compute_fatigue(a_rest, a_g7)
 
         # Elo zum Spielzeitpunkt
         if elo_per_game and game.game_id in elo_per_game:

@@ -77,7 +77,8 @@ class AdvancedTeamStats:
         allowed = avg_pts_allowed if avg_pts_allowed > 0 else 113.0
 
         # Pace-Näherung (NBA-Durchschnitt ~98–100 Possessions)
-        estimated_pace = 98.0 + (pts - 110.0) * 0.3
+        # Geclampt auf [85, 115] – identisch zu _CumulativeTeamTracker.compute_advanced_stats
+        estimated_pace = max(85.0, min(115.0, 98.0 + (pts - 110.0) * 0.3))
 
         # Offensive/Defensive Rating näherungsweise (benötigt echte Possession-Daten)
         off_rating = (pts / estimated_pace) * 100.0
