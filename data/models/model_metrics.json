@@ -1,53 +1,53 @@
 {
   "model_name": "LogisticRegression",
-  "accuracy": 0.6509,
-  "roc_auc": 0.7056,
-  "brier_score": 0.2154,
-  "cv_accuracy_mean": 0.6406,
-  "cv_accuracy_std": 0.005,
-  "train_samples": 5935,
-  "test_samples": 1484,
+  "accuracy": 0.6495,
+  "roc_auc": 0.6989,
+  "brier_score": 0.2183,
+  "cv_accuracy_mean": 0.6599,
+  "cv_accuracy_std": 0.0171,
+  "train_samples": 4504,
+  "test_samples": 1127,
   "feature_count": 45,
   "top_features": [
     {
-      "feature": "home_defensive_rating",
-      "importance": 2.1926
+      "feature": "home_elo",
+      "importance": 0.272
     },
     {
-      "feature": "home_avg_pts_allowed",
-      "importance": 1.8675
+      "feature": "diff_elo",
+      "importance": 0.2644
     },
     {
-      "feature": "home_point_diff",
-      "importance": 1.5119
+      "feature": "home_fatigue_score",
+      "importance": 0.1456
     },
     {
-      "feature": "home_net_rating",
-      "importance": 1.2788
+      "feature": "home_games_last_7_days",
+      "importance": 0.1421
     },
     {
-      "feature": "away_point_diff",
-      "importance": 1.1524
+      "feature": "diff_fatigue",
+      "importance": 0.1344
     },
     {
-      "feature": "away_net_rating",
-      "importance": 1.0375
+      "feature": "away_away_win_rate",
+      "importance": 0.115
     },
     {
-      "feature": "away_avg_pts_allowed",
-      "importance": 0.9835
+      "feature": "diff_net_rating",
+      "importance": 0.0956
     },
     {
-      "feature": "home_offensive_rating",
-      "importance": 0.9796
+      "feature": "away_elo",
+      "importance": 0.0922
+    },
+    {
+      "feature": "away_form_rating",
+      "importance": 0.0868
     },
     {
       "feature": "away_defensive_rating",
-      "importance": 0.8641
-    },
-    {
-      "feature": "away_offensive_rating",
-      "importance": 0.5372
+      "importance": 0.0714
     }
   ]
 }

@@ -5,6 +5,143 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ---
 
+## [0.8.0] – Betting-Scores, Bet-Guardrails, Season-Fix & Modell-Neutraining
+
+Vier Bereiche verbessert: Abgeschlossene Wetten zeigen jetzt den Endpunktstand,
+die Wettempfehlung filtert unglaubwürdige Tipps auf Außenseiter heraus,
+Season-Parameter werden überall dynamisch berechnet statt hardcodiert,
+und das Modell wurde mit den v0.7.0-Fixes neu trainiert.
+
+### Problemanalyse
+
+| # | Problem | Schwere | Status |
+|---|---------|---------|--------|
+| 1 | Abgeschlossene Wetten zeigten keinen Endpunktstand | Mittel | ✅ Behoben |
+| 2 | `bet_rating` rein edge-basiert – empfahl Außenseiter bei starker Marktmeinung | Hoch | ✅ Behoben |
+| 3 | Season-Parameter `2024` hardcodiert – falsche Daten ab Saison 2025/26 | Kritisch | ✅ Behoben |
+| 4 | Modell mit veralteten Feature-Formeln trainiert (v0.6.x) | Kritisch | ✅ Behoben |
+
+---
+
+### Technische Änderungen
+
+#### Endpunktstand bei aufgelösten Wetten (`tracker.py`, `resolver.py`, `server.py`, `app.js`)
+
+Abgeschlossene Wetten speichern und zeigen jetzt `home_score : away_score`.
+
+**`tracker.py`** – `Bet`-Dataclass um zwei Felder erweitert:
+```python
+home_score: int | None = None
+away_score: int | None = None
+```
+
+Datenbank-Schema und Migration (`_migrate_v2`) um beide Spalten ergänzt.
+`resolve_bet()` nimmt optionale Score-Parameter entgegen:
+```python
+def resolve_bet(
+    self, bet_id: int, actual_winner: str,
+    home_score: int | None = None,
+    away_score: int | None = None,
+) -> Bet | None:
+```
+
+**`resolver.py`** – `_find_game_winner()` umbenannt zu `_find_game_result()`
+und gibt jetzt ein Dict zurück statt nur den Sieger-String:
+```python
+return {"winner": ..., "home_score": ..., "away_score": ...}
+```
+`_fetch_recent_finished_games()` fügt `home_score`/`away_score` aus
+`g.home_score`/`g.away_score` dem Game-Dict hinzu.
+
+**`server.py`** – `/api/bets` GET-Response enthält `home_score`, `away_score`.
+
+**`app.js`** – `renderBetCard()` zeigt bei aufgelösten Wetten:
+```
+Gewinner: Charlotte Hornets   Charlotte Hornets 108:112 Brooklyn Nets
+```
+
+---
+
+#### Bet-Guardrails gegen Außenseiter-Empfehlungen (`comparison.py`)
+
+`bet_rating` prüft jetzt zwei Schutzregeln, bevor die Edge-Schwellen greifen:
+
+| Bedingung | Wirkung |
+|---|---|
+| `bet_odds_raw > 6.0` und `bet_ml_prob < 0.70` | `→ "none"` – KI zu unsicher bei starkem Außenseiter |
+| `bet_odds_raw > 3.5` und `not methods_agree` | `→ "none"` – KI und Buchmacher uneinig beim Underdog |
+
+**Beispiel (Auslöser dieser Änderung):** Brooklyn Nets (1-9) als Heimteam gegen
+Charlotte Hornets (7-3). KI: 54.8 % für Nets, Quoten: 9.12 (impliziert 10.5 %).
+Edge = 44.3 % → bisherige Logik: `"strong"`. Neue Logik: Quote 9.12 > 6.0,
+KI-Prob 54.8 % < 70 % → `"none"`. Kein Wetttipp.
+
+Die Grundursache (KI-Modell gibt 54.8 % für ein 1-9-Team) wird durch das
+Modell-Neutraining und den Season-Fix (unten) adressiert.
+
+---
+
+#### Season-Parameter dynamisch (`nba_api_client.py`, `ml_predictor.py`)
+
+`season = 2024` war an mehreren Stellen hardcodiert. Da die NBA-Saison
+im Oktober beginnt, gilt: `season = Jahr - 1` wenn Monat < Oktober.
+
+Neue Hilfsmethode in `NBAApiClient`:
+```python
+def _current_season(self) -> int:
+    today = date.today()
+    return today.year if today.month >= 10 else today.year - 1
+```
+
+Betroffen: `get_standings()`, `get_team_stats()`, `get_recent_games()`,
+`_compute_current_elo()` (ml_predictor.py).
+
+| Vorher | Nachher |
+|--------|---------|
+| `season: int = 2024` (hardcodiert) | `season: int \| None = None` → `_current_season()` |
+| Saison 2024-25 auch in 2025-26 geladen | Immer korrekte aktuelle Saison |
+
+---
+
+#### Modell-Neutraining (v0.7.0-Fixes aktiv)
+
+Erstes Training mit den korrekten Feature-Formeln aus v0.7.0.
+
+**Trainingsdaten:** Saisons 2021 (partial), 2023, 2024, 2025
+(Saison 2022 und Teile von 2021 wegen API-Verbindungsabbruch nicht verfügbar)
+
+| Metrik | v0.6.x | v0.8.0 | Δ |
+|--------|--------|--------|---|
+| Modell | LogisticRegression | LogisticRegression | – |
+| Accuracy (Test) | 65.1 % | 65.0 % | −0.1 pp |
+| ROC-AUC | 0.7056 | 0.6989 | −0.007 |
+| Brier Score | 0.2154 | 0.2183 | +0.003 |
+| CV-Accuracy | 64.1 % ± 0.5 % | **66.0 % ± 1.7 %** | +1.9 pp |
+| Train-Samples | 5 935 | 4 504 | −1 431 |
+| Feature-Anzahl | 45 | 45 | ✓ |
+
+**Wichtigste Beobachtung – Feature-Shift:**
+
+| Rang | v0.6.x | v0.8.0 |
+|------|--------|--------|
+| 1 | `home_defensive_rating` (2.193) | `home_elo` (0.272) |
+| 2 | `home_avg_pts_allowed` (1.868) | `diff_elo` (0.264) |
+| 3 | `home_point_diff` (1.512) | `home_fatigue_score` (0.146) |
+| 4 | `home_net_rating` (1.279) | `home_games_last_7_days` (0.142) |
+| 5 | `away_point_diff` (1.152) | `diff_fatigue` (0.134) |
+
+Das alte Modell stützte sich auf drei Variationen derselben Metrik
+(`avg_pts_allowed`, `defensive_rating`, `point_diff` – alle abgeleitet von
+Punkten pro Spiel). Das neue Modell gewichtet **Elo** (dynamische Saisonform)
+und **Fatigue** (Belastungssteuerung) – konzeptuell unabhängige Signale.
+
+Die erhöhte CV-Varianz (±1.7 % statt ±0.5 %) und der minimal schlechtere
+Brier Score sind auf die kleinere Datenbasis (API-Abbruch) zurückzuführen.
+Ein vollständiges Neutraining mit allen Saisons wird bessere Kalibrierung
+erwarten lassen.
+
+---
+
 ## [0.7.0] – Train/Predict-Mismatches, Elo-Regression & Logikfixes
 
 Kritische Korrekturen an der ML-Pipeline: Zwei Feature-Formeln, die beim
