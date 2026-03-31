@@ -272,8 +272,11 @@ class MLPredictor:
         """Berechnet Elo-Ratings aus den aktuellen Saisonspielen."""
         try:
             from src.api.nba_api_client import NBAApiClient
+            from datetime import date
             nba = NBAApiClient(self.config)
-            games = nba._fetch_season_games_paginated(2024, max_games=1300)
+            today = date.today()
+            season = today.year - 1 if today.month < 10 else today.year
+            games = nba._fetch_season_games_paginated(season, max_games=1300)
             return calculate_elo_ratings(games)
         except Exception as exc:
             self.logger.warning("Elo-Berechnung fehlgeschlagen: %s", exc)

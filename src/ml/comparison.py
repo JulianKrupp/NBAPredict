@@ -125,9 +125,24 @@ class ComparisonEntry:
     def bet_rating(self) -> str:
         """
         Bewertungskategorie der Wettempfehlung.
-        Basiert auf Edge (KI-Wahrsch. minus Quoten-Wahrsch.).
+        Basiert auf Edge, aber mit Schutzregeln gegen unglaubwürdige Empfehlungen:
+
+        - Quote > 6.0 (Außenseiter, implizierte Wahrsch. < ~16%):
+          KI muss > 70% für dieses Team geben, sonst kein Value.
+        - Quote > 3.5 (Underdog): KI und Quoten müssen dieselbe Seite favorisieren.
         """
         e = self.edge
+        odds = self.bet_odds_raw
+        ml_prob = self.bet_ml_prob
+
+        # Starker Außenseiter: KI muss sehr sicher sein
+        if odds > 6.0 and ml_prob < 0.70:
+            return "none"
+
+        # Underdog: Methoden müssen einig sein (KI und Quoten sehen denselben Sieger)
+        if odds > 3.5 and not self.methods_agree:
+            return "none"
+
         if e >= 0.15:
             return "strong"     # Stark empfohlen
         if e >= 0.08:

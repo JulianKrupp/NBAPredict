@@ -95,8 +95,17 @@ class NBAApiClient(BaseApiClient):
             self.logger.error("Spiele für %s konnten nicht geladen werden: %s", game_date, exc)
             return []
 
-    def get_standings(self, season: int = 2024) -> list[Team]:
+    def _current_season(self) -> int:
+        """Gibt das aktuelle NBA-Saisonstart-Jahr zurück.
+        NBA-Saison beginnt im Oktober: Oct 2025 – Jun 2026 = season 2025.
+        """
+        today = date.today()
+        return today.year if today.month >= 10 else today.year - 1
+
+    def get_standings(self, season: int | None = None) -> list[Team]:
         """Berechnet Standings aus Spielergebnissen (Free-Tier-Workaround)."""
+        if season is None:
+            season = self._current_season()
         self.logger.info("Lade Standings via /games (Saison %d)...", season)
         games = self._fetch_season_games_paginated(season, max_games=400)
         if not games:
@@ -105,7 +114,7 @@ class NBAApiClient(BaseApiClient):
         teams = self._calculate_standings_from_games(games, season)
         return sorted(teams.values(), key=lambda t: t.win_rate, reverse=True)
 
-    def get_team_stats(self, team_name: str, season: int = 2024) -> Team | None:
+    def get_team_stats(self, team_name: str, season: int | None = None) -> Team | None:
         resolved = self._resolve_team_name(team_name)
         for team in self.get_standings(season):
             if resolved.lower() in team.name.lower():
@@ -122,7 +131,7 @@ class NBAApiClient(BaseApiClient):
         try:
             resp = self.get(
                 f"{self.base_url}/games",
-                params={"team_ids[]": team_id, "per_page": min(num_games * 2, 100), "seasons[]": 2024},
+                params={"team_ids[]": team_id, "per_page": min(num_games * 2, 100), "seasons[]": self._current_season()},
                 headers=self._default_headers,
             )
             games = self._parse_games(resp.get("data", []))
