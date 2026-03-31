@@ -5,6 +5,135 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ---
 
+## [0.7.0] – Train/Predict-Mismatches, Elo-Regression & Logikfixes
+
+Kritische Korrekturen an der ML-Pipeline: Zwei Feature-Formeln, die beim
+Training und bei der Vorhersage unterschiedliche Werte lieferten, wurden
+vereinheitlicht. Außerdem saisonale Elo-Regression, Pace-Clamping und
+kleinere Logikfehler behoben. Das Modell muss neu trainiert werden.
+
+### Problemanalyse
+
+| # | Problem | Schwere | Status |
+|---|---------|---------|--------|
+| 1 | Fatigue-Feature: linearer Ausdruck beim Training, stufenbasierte Formel bei Prediction | Kritisch | ✅ Behoben |
+| 2 | Form-Rating: unterschiedliche Formeln in `_CumulativeTeamTracker` und `Team` | Kritisch | ✅ Behoben |
+| 3 | Pace-Formel ohne Clamping – unrealistische Werte bei Ausreißer-Teams | Mittel | ✅ Behoben |
+| 4 | Elo ohne saisonale Regression – frühere Saisons beeinflussen aktuelle Ratings unverhältnismäßig | Mittel | ✅ Behoben |
+| 5 | Elo-Cache-Reset bei jeder `predict()`-Aufruf – unnötiger API-Abruf bei Multi-Game-Sessions | Niedrig | ✅ Behoben |
+| 6 | `Game.winner` gibt bei Gleichstand `away_team` statt `None` zurück | Niedrig | ✅ Behoben |
+
+**Fatigue-Mismatch im Detail:** Beim Training berechnete `build_samples_cumulative()`
+den Ermüdungswert mit `h_fat = h_g7 * 0.15 - h_rest * 0.05` – einer einfachen
+linearen Formel. Bei der Vorhersage nutzte das Modell `team.fatigue_score`, das
+eine stufenbasierte Nicht-Linearität hat (0 Ruhetage → 1.0, 1 → 0.45, 2 → 0.15,
+3+ → 0.0) kombiniert mit Spieldichte. Beispiel: Bei 0 Ruhetagen und 3 Spielen
+in 7 Tagen: Training lieferte `0.45 - 0.0 = 0.45`, Prediction `0.65 * 1.0 + 0.35 * 0.5 = 0.825`.
+Das Modell lernte eine Feature-Skala, die es bei der Vorhersage nie zu sehen bekam.
+
+**Form-Rating-Mismatch im Detail:** `_CumulativeTeamTracker.form_rating` nutzte
+eine positionsgewichtete Formel über die letzten 5 Spiele mit Gewichten
+`[0.1, 0.15, 0.2, 0.25, 0.3]`. `Team.form_rating` nutzt dagegen
+`0.30×L3 + 0.40×L5 + 0.30×L10`. Beide Formeln liefern für dasselbe Team
+deutlich unterschiedliche Werte, was einen klassischen Train/Predict-Mismatch
+verursacht.
+
+### Technische Änderungen
+
+#### `_compute_fatigue()` – neue Hilfsfunktion (`data_collector.py`)
+
+Neue Modulfunktion, die exakt die Logik von `Team.fatigue_score` abbildet:
+
+```python
+def _compute_fatigue(days_rest: int, games_last_7: int) -> float:
+    if days_rest >= 3:   rest_fatigue = 0.0
+    elif days_rest == 2: rest_fatigue = 0.15
+    elif days_rest == 1: rest_fatigue = 0.45
+    else:                rest_fatigue = 1.0
+    density_fatigue = min(1.0, max(0.0, (games_last_7 - 2) / 2.0))
+    return round(0.65 * rest_fatigue + 0.35 * density_fatigue, 4)
+```
+
+Ersetzt die bisherige lineare Inline-Berechnung in `build_samples_cumulative()`.
+
+#### `_CumulativeTeamTracker.form_rating` vereinheitlicht (`data_collector.py`)
+
+`form_rating` und das neue Property `last_3_win_rate` wurden auf
+`0.30×L3 + 0.40×L5 + 0.30×L10` umgestellt – identisch zu `Team.form_rating`.
+
+| Vorher | Nachher |
+|--------|---------|
+| Positionsgewichtete letzte 5 Spiele | `0.30×last_3 + 0.40×last_5 + 0.30×last_10` |
+| Eigene Gewichte `[0.1, 0.15, 0.2, 0.25, 0.3]` | Konsistent mit `Team.form_rating` |
+
+#### Pace-Clamping (`data_collector.py`, `nba_stats_client.py`)
+
+Die Näherungsformel `98.0 + (pts - 110.0) * 0.3` wird jetzt auf den
+realistischen NBA-Bereich geclampt:
+
+```python
+pace = max(85.0, min(115.0, 98.0 + (pts - 110.0) * 0.3))
+```
+
+Gilt für `_CumulativeTeamTracker.compute_advanced_stats()` und
+`AdvancedTeamStats.from_basic_stats()`. Verhindert Division durch unrealistische
+Werte bei der Off/Def-Rating-Berechnung.
+
+#### Saisonale Elo-Regression (`elo.py`)
+
+Bei jedem Saisonwechsel werden alle Elo-Ratings um 25% zur Mitte (1500)
+zurückgezogen, bevor das erste Spiel der neuen Saison verarbeitet wird:
+
+```python
+ELO_SEASON_REGRESSION = 0.75  # 25% Regression zur Mitte
+elo[team] = 1500.0 + (elo[team] - 1500.0) * ELO_SEASON_REGRESSION
+```
+
+Gilt für `calculate_elo_ratings()` und `calculate_elo_per_game()`.
+Verhindert, dass ein Team aus einer schlechten Saison 2021 mit unverhältnismäßig
+niedrigem Elo in die Saison 2024 startet.
+
+#### Elo-Cache-Fix (`ml_predictor.py`)
+
+`self._elo_cache = None` wurde aus `predict()` entfernt. Der Cache ist
+instanz-weit gültig und wird automatisch beim Erstellen eines neuen
+`MLPredictor`-Objekts zurückgesetzt. Bei Vorhersagen für mehrere Spiele
+in einer Session werden 1300 Spielergebnisse jetzt nur noch einmal geladen.
+
+#### `Game.winner` bei Gleichstand (`game.py`)
+
+Bei `home_score == away_score` wurde fälschlicherweise `away_team` zurückgegeben.
+Jetzt explizite Drei-Wege-Logik: `home > away → home`, `away > home → away`,
+sonst `None`. Im NBA-Betrieb durch Verlängerungen nicht relevant, aber
+korrekt für Bet-Resolver-Logik.
+
+### Geänderte Dateien
+
+| Datei | Änderung |
+|-------|----------|
+| `src/ml/data_collector.py` | `_compute_fatigue()` (NEU), `last_3_win_rate` (NEU), `form_rating` L3+L5+L10, Pace geclampt |
+| `src/ml/elo.py` | `_regress_to_mean()` (NEU), Saisonwechsel-Tracking in beiden Elo-Funktionen |
+| `src/ml/ml_predictor.py` | Elo-Cache-Reset aus `predict()` entfernt |
+| `src/api/nba_stats_client.py` | Pace-Clamping in `from_basic_stats()` |
+| `src/models/game.py` | `winner`-Property: `None` statt `away_team` bei Gleichstand |
+
+### Inkompatibilitäten / Migration
+
+Das v4-Modell (45 Features) bleibt kompatibel – die Feature-Anzahl ändert sich
+nicht. Allerdings liefern `fatigue_score` und `form_rating` jetzt andere Werte
+als beim Training des v4-Modells. **Neutraining empfohlen**, um von den
+korrekten Feature-Werten zu profitieren.
+
+```bash
+# Daten NEU sammeln (korrigierte Fatigue- und Form-Formeln):
+python main.py train collect --seasons 2021 2022 2023 2024 --max-games 5000
+
+# Modell neu trainieren:
+python main.py train model
+```
+
+---
+
 ## [0.6.0] – Data Leakage Fix, kumulative Stats & Odds-Bereinigung
 
 Kritischer Fix der ML-Pipeline: Data Leakage durch Saison-Endstand-Stats
