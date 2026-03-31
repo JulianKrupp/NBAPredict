@@ -5,6 +5,11 @@ const API = '';
 let currentDate = new Date().toISOString().slice(0, 10);
 let teamNames = [];
 
+// Auto-Refresh State
+let _autoRefreshTimer = null;
+let _lastScoresLoad   = null;
+let _nextRefreshAt    = null;
+
 // ══════════════════════════════════════════════════════
 //  NAVIGATION
 // ══════════════════════════════════════════════════════
@@ -37,6 +42,57 @@ function errorHtml(msg) {
 }
 function loadingHtml(text = 'Lade Daten...') {
   return `<div class="loading"><div class="spinner"></div>${text}</div>`;
+}
+
+// ══════════════════════════════════════════════════════
+//  AUTO-REFRESH SYSTEM
+// ══════════════════════════════════════════════════════
+
+// NBA Spielzeiten (MEZ): typisch 01:00–07:00 Uhr.
+// Außerhalb dieser Zeiten wird kein automatischer Refresh ausgelöst
+// um API-Limits (Free Tier) zu schonen. Scores-Only – Odds nie automatisch.
+const GAME_HOURS = { start: 1, end: 7 };
+const SCORES_REFRESH_MS = 5 * 60 * 1000; // 5 min während laufender Spiele
+
+function isGameTime() {
+  const h = new Date().getHours();
+  return h >= GAME_HOURS.start && h < GAME_HOURS.end;
+}
+
+function msUntilNextGameTime() {
+  const next = new Date();
+  next.setHours(GAME_HOURS.start, 0, 0, 0);
+  if (next <= new Date()) next.setDate(next.getDate() + 1);
+  return next - new Date();
+}
+
+function scheduleScoresRefresh() {
+  if (_autoRefreshTimer) clearTimeout(_autoRefreshTimer);
+  _nextRefreshAt = null;
+  if (isGameTime()) {
+    _nextRefreshAt = Date.now() + SCORES_REFRESH_MS;
+    _autoRefreshTimer = setTimeout(() => {
+      loadScores(true).catch(() => {}).finally(scheduleScoresRefresh);
+    }, SCORES_REFRESH_MS);
+  } else {
+    // Schläft bis 01:00 MEZ, dann erste Aktualisierung
+    _autoRefreshTimer = setTimeout(scheduleScoresRefresh, msUntilNextGameTime());
+  }
+  updateRefreshStatus();
+}
+
+function updateRefreshStatus() {
+  const el = document.getElementById('refresh-status');
+  if (!el) return;
+  if (!_lastScoresLoad) { el.textContent = ''; return; }
+  const lastStr = _lastScoresLoad.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  if (!isGameTime()) {
+    el.textContent = `↻ ${lastStr} · keine Spiele`;
+    return;
+  }
+  const nextMs  = _nextRefreshAt ? Math.max(0, _nextRefreshAt - Date.now()) : 0;
+  const nextMin = nextMs < 90000 ? '<1' : Math.round(nextMs / 60000);
+  el.textContent = `↻ ${lastStr} · nächste in ${nextMin} min`;
 }
 
 // ══════════════════════════════════════════════════════
@@ -107,46 +163,68 @@ function formatDate(s) {
   return d.toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-async function loadScores() {
+function buildGameCard(g) {
+  const haScore    = g.home_score > 0 || g.away_score > 0;
+  const scoreHtml  = haScore
+    ? `${g.home_score} <span style="color:var(--text3)">–</span> ${g.away_score}`
+    : `<span style="color:var(--text3);font-size:22px">${g.date?.slice(11, 16) || '–'}</span>`;
+  const statusClass = g.is_live ? 'live-s' : g.is_final ? 'final-s' : 'sched-s';
+  const statusText  = g.is_live ? '● LIVE' : g.is_final ? '✓ FINAL' : '◷ GEPLANT';
+  const winMark = side => g.winner && g.winner.includes(side) ? '<span class="winner-mark"> ★</span>' : '';
+  const homeAbbr  = abbr(g.home);
+  const awayAbbr  = abbr(g.away);
+  const gameDate  = g.date?.slice(0, 10) || currentDate;
+
+  return `
+  <div id="game-card-${g.id}" class="game-card ${g.is_live ? 'live' : ''}" onclick="quickPredict('${g.home}','${g.away}')">
+    <div class="game-status ${statusClass}">${statusText}</div>
+    <button class="game-refresh-btn" title="Spiel aktualisieren"
+      onclick="event.stopPropagation();refreshGame(${g.id},'${gameDate}',this)">↻</button>
+    <div class="game-matchup">
+      <div class="game-team">
+        <div class="team-abbr">${homeAbbr}${winMark(g.home)}</div>
+        <div class="team-full">${g.home}</div>
+      </div>
+      <div class="game-score">${scoreHtml}</div>
+      <div class="game-team">
+        <div class="team-abbr">${awayAbbr}${winMark(g.away)}</div>
+        <div class="team-full">${g.away}</div>
+      </div>
+    </div>
+    <div class="game-time">Auf KI-Vorhersage klicken</div>
+  </div>`;
+}
+
+async function refreshGame(gameId, gameDate, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+  try {
+    const games = await apiFetch(`/api/scores?date=${gameDate}`);
+    const game  = games.find(g => g.id === gameId);
+    if (game) {
+      const card = document.getElementById(`game-card-${gameId}`);
+      if (card) card.outerHTML = buildGameCard(game);
+    } else {
+      if (btn) { btn.disabled = false; btn.textContent = '↻'; }
+    }
+  } catch {
+    if (btn) { btn.disabled = false; btn.textContent = '↻'; }
+  }
+}
+
+async function loadScores(silent = false) {
   const el = document.getElementById('scores-content');
-  el.innerHTML = loadingHtml('Lade Spiele...');
+  if (!silent) el.innerHTML = loadingHtml('Lade Spiele...');
   try {
     const games = await apiFetch(`/api/scores?date=${currentDate}`);
+    _lastScoresLoad = new Date();
+    scheduleScoresRefresh();
     if (!games.length) {
       el.innerHTML = `<div class="empty-msg"><div class="empty-icon">📅</div><div class="empty-text">Keine Spiele an diesem Tag</div></div>`;
       return;
     }
-
-    const cards = games.map(g => {
-      const haScore = g.home_score > 0 || g.away_score > 0;
-      const scoreHtml = haScore ? `${g.home_score} <span style="color:var(--text3)">–</span> ${g.away_score}` : `<span style="color:var(--text3);font-size:22px">${g.date?.slice(11, 16) || '–'}</span>`;
-      const statusClass = g.is_live ? 'live-s' : g.is_final ? 'final-s' : 'sched-s';
-      const statusText = g.is_live ? '● LIVE' : g.is_final ? '✓ FINAL' : '◷ GEPLANT';
-      const winMark = (side) => g.winner && g.winner.includes(side) ? '<span class="winner-mark"> ★</span>' : '';
-      const homeAbbr = abbr(g.home);
-      const awayAbbr = abbr(g.away);
-
-      return `
-      <div class="game-card ${g.is_live ? 'live' : ''}" onclick="quickPredict('${g.home}','${g.away}')">
-        <div class="game-status ${statusClass}">${statusText}</div>
-        <div class="game-matchup">
-          <div class="game-team">
-            <div class="team-abbr">${homeAbbr}${winMark(g.home)}</div>
-            <div class="team-full">${g.home}</div>
-          </div>
-          <div class="game-score">${scoreHtml}</div>
-          <div class="game-team">
-            <div class="team-abbr">${awayAbbr}${winMark(g.away)}</div>
-            <div class="team-full">${g.away}</div>
-          </div>
-        </div>
-        <div class="game-time">Auf KI-Vorhersage klicken</div>
-      </div>`;
-    }).join('');
-
-    el.innerHTML = `<div class="games-grid">${cards}</div>`;
+    el.innerHTML = `<div class="games-grid">${games.map(buildGameCard).join('')}</div>`;
   } catch (e) {
-    el.innerHTML = errorHtml(e.message);
+    if (!silent) el.innerHTML = errorHtml(e.message);
   }
 }
 
@@ -456,6 +534,7 @@ function showBetsTab(tab) {
   else if (tab === 'open') loadOpenBets();
   else if (tab === 'history') loadBetsHistory();
   else if (tab === 'analytics') loadBetsAnalytics();
+  else if (tab === 'versions') loadVersionComparison();
 }
 
 async function loadBetsDashboard() {
@@ -536,7 +615,7 @@ async function loadOpenBets() {
   } catch (e) { el.innerHTML = errorHtml(e.message); }
 }
 
-async function loadBetsHistory() {
+async function loadBetsHistory(filterVersion = '') {
   const el = document.getElementById('bets-tab-history');
   el.innerHTML = loadingHtml('Lade Wett-Historie...');
   try {
@@ -545,7 +624,25 @@ async function loadBetsHistory() {
       el.innerHTML = `<div class="empty-msg"><div class="empty-icon">📊</div><div class="empty-text">Noch keine Wetten</div></div>`;
       return;
     }
-    el.innerHTML = `<div class="bets-grid">${bets.map(renderBetCard).join('')}</div>`;
+
+    // Alle verfügbaren Versionen für Filter-Dropdown
+    const versions = [...new Set(bets.map(b => b.model_version).filter(Boolean))].sort();
+    const activeFilter = filterVersion || '';
+    const filtered = activeFilter ? bets.filter(b => b.model_version === activeFilter) : bets;
+
+    const versionOpts = `<option value="">Alle Versionen (${bets.length})</option>` +
+      versions.map(v => {
+        const count = bets.filter(b => b.model_version === v).length;
+        return `<option value="${v}" ${v === activeFilter ? 'selected' : ''}>${v} (${count})</option>`;
+      }).join('');
+
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+        <label style="font-size:12px;color:var(--text3)">Version:</label>
+        <select onchange="loadBetsHistory(this.value)" style="min-width:200px">${versionOpts}</select>
+        <span style="font-size:12px;color:var(--text3);font-family:var(--mono)">${filtered.length} Wette${filtered.length !== 1 ? 'n' : ''}</span>
+      </div>
+      <div class="bets-grid">${filtered.map(renderBetCard).join('')}</div>`;
   } catch (e) { el.innerHTML = errorHtml(e.message); }
 }
 
@@ -581,8 +678,15 @@ function renderBetCard(b) {
           <div class="bet-card-stat-value ${profitClass}">${b.status !== 'open' ? (b.profit >= 0 ? '+' : '') + b.profit.toFixed(1) : '–'}</div>
         </div>
       </div>
-      ${b.actual_winner ? `<div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-top:6px">Gewinner: ${b.actual_winner}</div>` : ''}
+      ${b.actual_winner ? `
+        <div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-top:6px;display:flex;gap:12px;flex-wrap:wrap">
+          <span>Gewinner: ${b.actual_winner}</span>
+          ${b.home_score != null && b.away_score != null
+            ? `<span style="color:var(--text2)">${b.home_team} <strong style="color:var(--gold)">${b.home_score}:${b.away_score}</strong> ${b.away_team}</span>`
+            : ''}
+        </div>` : ''}
       <div class="bet-card-actions">
+        ${b.model_version ? `<span class="bet-version-badge">${b.model_version}</span>` : ''}
         <button onclick="deleteBet(${b.id})">Löschen</button>
       </div>
     </div>`;
@@ -975,6 +1079,8 @@ function updateTeamList() {
 (async function init() {
   initScores();
   loadStandings();
+  loadScores();
+  setInterval(updateRefreshStatus, 30000);
 })();
 
 // ── Periode abschließen ──────────────────────────────

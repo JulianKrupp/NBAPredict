@@ -115,6 +115,7 @@ body::before {
   content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
 }
+.card-mb { margin-bottom: 24px; }
 .card-title {
   font-family: var(--head); font-size: 11px; font-weight: 700;
   letter-spacing: 2px; text-transform: uppercase;
@@ -193,6 +194,18 @@ body::before {
 .game-score { font-family: var(--head); font-size: 36px; font-weight: 900; letter-spacing: -2px; color: var(--text1); text-align: center; min-width: 80px; }
 .game-time { font-family: var(--mono); font-size: 11px; color: var(--text3); margin-top: 12px; text-align: center; }
 .winner-mark { color: var(--gold); font-size: 12px; }
+.game-refresh-btn {
+  position: absolute; top: 12px; right: 12px;
+  background: none; border: 1px solid var(--border);
+  color: var(--text3); cursor: pointer; padding: 2px 7px;
+  border-radius: 6px; font-size: 12px; line-height: 1.6;
+  opacity: 0; transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+  z-index: 2;
+}
+.game-card:hover .game-refresh-btn { opacity: 1; }
+.game-refresh-btn:hover { color: var(--text1); border-color: rgba(255,255,255,0.25); }
+.game-refresh-btn:disabled { cursor: wait; opacity: 0.5; }
+.refresh-status { font-family: var(--mono); font-size: 11px; color: var(--text3); white-space: nowrap; margin-left: 4px; }
 
 /* ══════════════════════════════════════════════════════
    PREDICT PAGE
@@ -335,9 +348,10 @@ body::before {
 .bet-profit-positive { color: var(--green) !important; }
 .bet-profit-negative { color: var(--red) !important; }
 .bets-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
-.bet-card-actions { display: flex; gap: 6px; margin-top: 10px; justify-content: flex-end; }
+.bet-card-actions { display: flex; gap: 6px; margin-top: 10px; justify-content: flex-end; align-items: center; }
 .bet-card-actions button { font-size: 11px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg2); color: var(--text3); cursor: pointer; font-family: var(--mono); }
 .bet-card-actions button:hover { border-color: var(--red); color: var(--red); }
+.bet-version-badge { font-family: var(--mono); font-size: 10px; color: var(--text3); background: var(--bg2); border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; margin-right: auto; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rating-breakdown { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-top: 12px; }
 .rating-card { background: var(--bg2); border-radius: 10px; padding: 14px; }
 .rating-card-title { font-family: var(--head); font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text3); margin-bottom: 8px; }
