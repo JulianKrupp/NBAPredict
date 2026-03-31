@@ -316,6 +316,7 @@ def get_bets():
             "edge": round(b.edge, 4), "ev": round(b.ev, 4),
             "bet_rating": b.bet_rating, "status": b.status,
             "actual_winner": b.actual_winner,
+            "home_score": b.home_score, "away_score": b.away_score,
             "payout": round(b.payout, 2), "profit": round(b.profit, 2),
             "placed_at": b.placed_at, "resolved_at": b.resolved_at,
             "model_version": b.model_version, "period_id": b.period_id,

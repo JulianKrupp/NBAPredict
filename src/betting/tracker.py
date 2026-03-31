@@ -64,6 +64,8 @@ class Bet:
     bet_rating: str
     status: Literal["open", "won", "lost"] = "open"
     actual_winner: str | None = None
+    home_score: int | None = None
+    away_score: int | None = None
     payout: float = 0.0
     profit: float = 0.0
     placed_at: str = ""
@@ -154,7 +156,10 @@ class BettingTracker:
             model_version=version,
         )
 
-    def resolve_bet(self, bet_id: int, actual_winner: str) -> Bet | None:
+    def resolve_bet(
+        self, bet_id: int, actual_winner: str,
+        home_score: int | None = None, away_score: int | None = None,
+    ) -> Bet | None:
         bet = self.get_bet(bet_id)
         if not bet or bet.status != "open":
             return None
@@ -166,9 +171,11 @@ class BettingTracker:
         now = datetime.now().isoformat(timespec="seconds")
         with self._connect() as conn:
             conn.execute(
-                "UPDATE bets SET status=?,actual_winner=?,payout=?,profit=?,resolved_at=? WHERE id=?",
-                (status, actual_winner, payout, profit, now, bet_id))
+                "UPDATE bets SET status=?,actual_winner=?,home_score=?,away_score=?,"
+                "payout=?,profit=?,resolved_at=? WHERE id=?",
+                (status, actual_winner, home_score, away_score, payout, profit, now, bet_id))
         bet.status, bet.actual_winner = status, actual_winner
+        bet.home_score, bet.away_score = home_score, away_score
         bet.payout, bet.profit, bet.resolved_at = payout, profit, now
         return bet
 
@@ -735,7 +742,8 @@ class BettingTracker:
                 edge REAL NOT NULL, ev REAL NOT NULL,
                 bet_rating TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'open',
-                actual_winner TEXT, payout REAL NOT NULL DEFAULT 0,
+                actual_winner TEXT, home_score INTEGER, away_score INTEGER,
+                payout REAL NOT NULL DEFAULT 0,
                 profit REAL NOT NULL DEFAULT 0,
                 placed_at TEXT NOT NULL, resolved_at TEXT,
                 model_version TEXT NOT NULL DEFAULT 'unknown',
@@ -768,6 +776,10 @@ class BettingTracker:
                 conn.execute(
                     "ALTER TABLE bets ADD COLUMN period_id INTEGER")
                 logger.info("Migration: period_id-Spalte zu bets hinzugefügt.")
+            if "home_score" not in cols:
+                conn.execute("ALTER TABLE bets ADD COLUMN home_score INTEGER")
+                conn.execute("ALTER TABLE bets ADD COLUMN away_score INTEGER")
+                logger.info("Migration: home_score/away_score-Spalten zu bets hinzugefügt.")
         except Exception as exc:
             logger.debug("Migration-Check: %s", exc)
 
@@ -789,6 +801,8 @@ class BettingTracker:
             bet_rating=row["bet_rating"],
             status=row["status"],
             actual_winner=row["actual_winner"],
+            home_score=row["home_score"] if "home_score" in keys else None,
+            away_score=row["away_score"] if "away_score" in keys else None,
             payout=row["payout"],
             profit=row["profit"],
             placed_at=row["placed_at"],

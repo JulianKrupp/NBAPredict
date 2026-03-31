@@ -61,11 +61,15 @@ class BetResolver:
 
         for bet in open_bets:
             try:
-                winner = self._find_game_winner(bet, recent_games)
-                if winner is None:
+                game_result = self._find_game_result(bet, recent_games)
+                if game_result is None:
                     continue  # Spiel noch nicht beendet
 
-                result = self.tracker.resolve_bet(bet.id, winner)
+                result = self.tracker.resolve_bet(
+                    bet.id, game_result["winner"],
+                    home_score=game_result.get("home_score"),
+                    away_score=game_result.get("away_score"),
+                )
                 if result:
                     resolved += 1
                     if result.is_won:
@@ -112,6 +116,8 @@ class BetResolver:
                             "home": g.home_team,
                             "away": g.away_team,
                             "winner": g.winner,
+                            "home_score": g.home_score,
+                            "away_score": g.away_score,
                             "date": date_str,
                         })
             except Exception as exc:
@@ -120,11 +126,12 @@ class BetResolver:
         return games
 
     @staticmethod
-    def _find_game_winner(bet, games: list[dict]) -> str | None:
+    def _find_game_result(bet, games: list[dict]) -> dict | None:
         """
-        Findet den Gewinner des Spiels, das zur Wette passt.
+        Findet das Ergebnis des Spiels, das zur Wette passt.
 
         Matcht über Teamnamen (case-insensitive, Teilstring-Match).
+        Returns dict mit winner, home_score, away_score oder None.
         """
         bet_home = bet.home_team.lower()
         bet_away = bet.away_team.lower()
@@ -140,6 +147,10 @@ class BetResolver:
                          any(w in bet_away for w in game_away.split())
 
             if home_match and away_match:
-                return game["winner"]
+                return {
+                    "winner": game["winner"],
+                    "home_score": game.get("home_score"),
+                    "away_score": game.get("away_score"),
+                }
 
         return None  # Spiel noch nicht beendet
