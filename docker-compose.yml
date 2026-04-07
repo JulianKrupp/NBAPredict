@@ -1,0 +1,59 @@
+# NBA Tracker – Docker Compose
+# Starten mit: docker compose up
+# Stoppen mit:  docker compose down
+
+services:
+
+  # ── Web-Applikation ──────────────────────────────────────────────────────
+  web:
+    build: .
+    container_name: nba-tracker-web
+    ports:
+      - "5000:5000"
+    volumes:
+      # Persistenz: Datenbank, Modelle und Trainingsdaten bleiben erhalten
+      - ./data:/app/data
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    environment:
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/standings')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ── Bet-Resolver (optionaler Hintergrunddienst) ──────────────────────────
+  # Löst offene Wetten automatisch auf, sobald Spiele beendet sind.
+  # Kann dauerhaft laufen oder als Cron-Job eingesetzt werden.
+  #
+  # Zum Aktivieren: Kommentar unten entfernen und
+  #   docker compose up -d resolver
+  # ausführen.
+  #
+  # resolver:
+  #   build: .
+  #   container_name: nba-tracker-resolver
+  #   command: python -c "
+  #     from src.utils.config import Config;
+  #     from src.betting.resolver import BetResolver;
+  #     import time, logging;
+  #     logging.basicConfig(level=logging.INFO);
+  #     r = BetResolver(Config());
+  #     while True:
+  #       r.resolve_all_open();
+  #       time.sleep(3600)"
+  #   volumes:
+  #     - ./data:/app/data
+  #     - ./logs:/app/logs
+  #   env_file:
+  #     - .env
+  #   restart: unless-stopped
+  #   depends_on:
+  #     web:
+  #       condition: service_healthy

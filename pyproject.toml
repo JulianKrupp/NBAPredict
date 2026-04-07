@@ -1,0 +1,93 @@
+[project]
+name = "nba-predict"
+version = "0.9.0"
+description = "KI-gestütztes NBA Vorhersage- und Wettanalyse-System"
+requires-python = ">=3.12"
+readme = "README.md"
+
+dependencies = [
+    "requests>=2.32.0",
+    "urllib3>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "nba_api>=1.4.0",
+    "scikit-learn>=1.3.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "joblib>=1.3.0",
+    "flask>=3.0.0",
+    "flask-cors>=4.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.5.0",
+]
+
+[project.scripts]
+# CLI-Einstiegspunkt: nach `pip install -e .` kann `nba <befehl>` verwendet werden
+nba = "main:main"
+
+# ── Ruff – Linting & Formatierung ─────────────────────────────────────────────
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+exclude = [
+    ".venv",
+    ".git",
+    "__pycache__",
+    "htmlcov",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (Import-Sortierung)
+    "N",   # pep8-naming
+    "UP",  # pyupgrade (moderne Python-Syntax)
+    "B",   # flake8-bugbear (häufige Bugs)
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # Zeilenlänge (durch line-length geregelt)
+    "B008",  # do not perform function call in default arguments
+    "N803",  # Argument-Namen in Funktionen (häufig bei ML: X, y)
+    "N806",  # Variable in function should be lowercase (ML: X_train)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+# ── Pytest ────────────────────────────────────────────────────────────────────
+# Konfiguration auch in pytest.ini (beide werden unterstützt)
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--verbose",
+    "--tb=short",
+    "--cov=src",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--cov-fail-under=75",
+]
+
+# ── Coverage ─────────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "src/utils/display.py",   # reine Ausgabefunktionen
+    "src/utils/ml_display.py",
+    "**/__init__.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

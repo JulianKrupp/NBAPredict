@@ -1,0 +1,48 @@
+# Virtuelle Umgebung
+.venv/
+venv/
+env/
+
+# Python-Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Umgebungsvariablen (niemals in Container!)
+.env
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test-Artefakte
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Logs (werden als Volume gemountet)
+logs/
+*.log
+
+# Temporäre Dateien
+*.tmp
+*.bak
+data/cache/
+
+# Dokumentation (nicht nötig im Container)
+*.docx
+*.pdf
+README.md
+CHANGELOG.md
+
+# Trainingsdaten (groß, werden als Volume gemountet)
+# data/training_data/
+# Kommentar entfernen um Trainingsdaten vom Image auszuschließen
