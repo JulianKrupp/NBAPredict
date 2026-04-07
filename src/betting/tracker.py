@@ -15,6 +15,7 @@ Datenbank: data/betting/bets.db
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sqlite3
@@ -33,14 +34,24 @@ DEFAULT_STAKE = 10.0
 
 
 def _current_model_version() -> str:
-    """Liest die aktive Modellversion aus model_metrics.json."""
+    """
+    Liest die aktive Modellversion aus model_metrics.json.
+
+    Format (neu): <Algorithmus>_f<Features>_<Datum>   z.B. "Logist_f45_2026-04-02"
+    Fallback für alte Metriken ohne trained_at: <Algorithmus>_f<Features>_a<Accuracy>
+    """
     try:
         if METRICS_PATH.exists():
             with open(METRICS_PATH, encoding="utf-8") as f:
                 m = json.load(f)
-            fc = m.get("feature_count", "?")
-            acc = round(m.get("accuracy", 0) * 100)
             name = m.get("model_name", "unknown")[:6]
+            fc   = m.get("feature_count", "?")
+            trained_at = m.get("trained_at", "")
+            if trained_at:
+                date_str = trained_at[:10]  # "2026-04-02T14:30:00" → "2026-04-02"
+                return f"{name}_f{fc}_{date_str}"
+            # Fallback: altes Format ohne Timestamp
+            acc = round(m.get("accuracy", 0) * 100)
             return f"{name}_f{fc}_a{acc}"
     except Exception:
         pass
@@ -724,11 +735,30 @@ class BettingTracker:
             rows = c.execute("SELECT * FROM bets ORDER BY placed_at ASC").fetchall()
         return [self._row_to_bet(r) for r in rows]
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def _connect(self):
+        """
+        Kontextmanager für SQLite-Verbindungen.
+
+        Stellt sicher, dass die Verbindung nach Nutzung immer geschlossen wird
+        (verhindert ResourceWarning durch ungeschlossene Connections).
+        Commit bei Erfolg, Rollback bei Exception.
+
+        Hinweis: WAL-Modus wird nicht verwendet, da er auf Docker-Volume-Mounts
+        (Windows-Host via WSL2) durch fehlende Shared-Memory-Unterstützung zu
+        einem sqlite3.OperationalError führt. Der Standard-Journaling-Modus
+        (DELETE) ist für diesen Anwendungsfall ausreichend.
+        """
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        return conn
+        try:
+            yield conn
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def _init_db(self) -> None:
         with self._connect() as c:
