@@ -6,6 +6,7 @@ Subkommandos:
   predict, ml-predict
   train collect|model|all|metrics
   compare
+  bets list|stats|resolve|reset|close-period
 """
 
 import argparse
@@ -59,6 +60,17 @@ def build_argument_parser() -> argparse.ArgumentParser:
     comp_p = sub.add_parser("compare")
     comp_p.add_argument("--home", type=str, default=None)
     comp_p.add_argument("--away", type=str, default=None)
+
+    bets_p = sub.add_parser("bets")
+    bets_sub = bets_p.add_subparsers(dest="bets_command")
+    bets_list_p = bets_sub.add_parser("list", help="Wetten anzeigen")
+    bets_list_p.add_argument("--status", choices=["open", "won", "lost", "all"], default="all")
+    bets_sub.add_parser("stats", help="Wett-Statistiken anzeigen")
+    bets_sub.add_parser("resolve", help="Offene Wetten automatisch auflösen")
+    bets_sub.add_parser("reset", help="Alle Wetten löschen (unwiderruflich)")
+    close_p = bets_sub.add_parser("close-period", help="Aktuelle Periode abschließen")
+    close_p.add_argument("--label", type=str, default=None)
+    close_p.add_argument("--notes", type=str, default="")
 
     return parser
 
@@ -173,6 +185,95 @@ def handle_train(config, args):
         print("Verwendung: python main.py train [collect|model|all|metrics]")
 
 
+def handle_bets(config, args):
+    from src.betting.tracker import BettingTracker
+    from src.betting.resolver import BetResolver
+
+    cmd = getattr(args, "bets_command", None)
+    tracker = BettingTracker()
+
+    if cmd == "list":
+        status_filter = getattr(args, "status", "all")
+        with tracker._connect() as conn:
+            query = "SELECT * FROM bets"
+            params: list = []
+            if status_filter != "all":
+                query += " WHERE status = ?"
+                params.append(status_filter)
+            query += " ORDER BY placed_at DESC"
+            rows = conn.execute(query, params).fetchall()
+
+        if not rows:
+            print("Keine Wetten gefunden.")
+            return
+        print(f"\n{'─'*70}")
+        print(f"  {'ID':<4} {'Matchup':<30} {'Wette auf':<12} {'Quote':<6} {'Status':<8} {'Profit'}")
+        print(f"{'─'*70}")
+        for r in rows:
+            profit_str = f"{r['profit']:+.1f}" if r['status'] != 'open' else "–"
+            print(f"  {r['id']:<4} {r['home_team']+' vs '+r['away_team']:<30} {r['bet_on']:<12} {r['odds']:<6.2f} {r['status']:<8} {profit_str}")
+        print(f"{'─'*70}  ({len(rows)} Wetten)\n")
+
+    elif cmd == "stats":
+        stats = tracker.get_stats()
+        d = stats.to_dict()
+        print(f"\n{'='*50}")
+        print(f"  WETT-STATISTIKEN")
+        print(f"{'─'*50}")
+        print(f"  Gesamt:        {d['total_bets']} ({d['open_bets']} offen)")
+        print(f"  Bilanz:        {d['won']}W / {d['lost']}L")
+        print(f"  Win-Rate:      {d['win_rate']*100:.1f}%")
+        print(f"  Profit:        {d['total_profit']:+.2f}")
+        print(f"  ROI:           {d['roi']:+.1f}%")
+        print(f"  Ø Quote:       {d['avg_odds']:.2f}")
+        print(f"  Ø Edge:        {d['avg_edge']*100:.1f}%")
+        print(f"  Serie:         aktuell {d['current_streak']} | best {d['best_streak']}")
+        if d['profit_by_rating']:
+            print(f"{'─'*50}")
+            print(f"  Profit nach Rating:")
+            for rating, profit in sorted(d['profit_by_rating'].items()):
+                rec = d['record_by_rating'].get(rating, {})
+                w, l = rec.get('won', 0), rec.get('lost', 0)
+                print(f"    {rating:<10} {profit:+.2f}  ({w}W/{l}L)")
+        print(f"{'='*50}\n")
+
+    elif cmd == "resolve":
+        resolver = BetResolver(config)
+        result = resolver.resolve_all_open()
+        print(f"\n  Aufgelöst: {result['resolved']} ({result['won']}W / {result['lost']}L)")
+        print(f"  Noch offen: {result['still_open']}\n")
+
+    elif cmd == "reset":
+        print("⚠️  Alle Wetten unwiderruflich löschen?")
+        if input("  Bestätigen mit 'ja': ").strip().lower() != "ja":
+            print("  Abgebrochen.")
+            return
+        count = tracker.reset()
+        print(f"  ✅ {count} Wetten gelöscht.\n")
+
+    elif cmd == "close-period":
+        label = getattr(args, "label", None)
+        notes = getattr(args, "notes", "")
+        result = tracker.close_period(label=label, notes=notes)
+        if result.get("success"):
+            print(f"\n  ✅ Periode #{result['period_id']} abgeschlossen")
+            print(f"  Label:    {result['label']}")
+            print(f"  Wetten:   {result['bets_closed']}")
+            print(f"  Win-Rate: {result['win_rate']*100:.1f}%")
+            print(f"  Profit:   {result['profit']:+.2f}")
+            print(f"  ROI:      {result['roi']:.1f}%\n")
+        else:
+            print(f"\n  ❌ {result.get('error', 'Unbekannter Fehler')}\n")
+
+    else:
+        print("Verwendung: python main.py bets [list|stats|resolve|reset|close-period]")
+        print("  list [--status open|won|lost|all]")
+        print("  stats")
+        print("  resolve")
+        print("  reset")
+        print("  close-period [--label TEXT] [--notes TEXT]")
+
+
 def handle_compare(config, home_name, away_name):
     comparison = OddsVsMLComparison(config)
     if home_name and away_name:
@@ -214,6 +315,7 @@ def main() -> int:
             "ml-predict": lambda: handle_ml_predict(nba_client, odds_client, ml_predictor, args.home_team, args.away_team),
             "train":      lambda: handle_train(config, args),
             "compare":    lambda: handle_compare(config, getattr(args, "home", None), getattr(args, "away", None)),
+            "bets":       lambda: handle_bets(config, args),
         }
 
         handler = dispatch.get(args.command)
