@@ -539,61 +539,29 @@ class BettingTracker:
         return total / len(bets)
 
     def _by_rating(self, resolved: list[Bet]) -> list[dict]:
-        labels = {"strong": "Stark", "good": "Gut",
-                  "slight": "Leicht", "none": "Kein"}
+        labels = {"strong": "Stark", "good": "Gut", "slight": "Leicht", "none": "Kein"}
         result = []
         for rat in ("strong", "good", "slight", "none"):
             group = [b for b in resolved if b.bet_rating == rat]
             if not group:
                 continue
-            w = sum(1 for b in group if b.is_won)
-            p = sum(b.profit for b in group)
-            s = sum(b.stake for b in group)
-            result.append({
-                "rating": rat, "label": labels[rat],
-                "bets": len(group), "won": w, "lost": len(group) - w,
-                "win_rate": round(w / len(group), 4),
-                "profit": round(p, 2),
-                "roi": round(p / s * 100, 2) if s else 0,
-                "avg_odds": round(sum(b.odds for b in group) / len(group), 2),
-                "avg_edge": round(sum(b.edge for b in group) / len(group), 4),
-            })
+            result.append({"rating": rat, "label": labels[rat], **self._group_stats(group)})
         return result
 
     def _by_team(self, resolved: list[Bet]) -> list[dict]:
-        teams: dict[str, dict] = defaultdict(
-            lambda: {"bets": 0, "won": 0, "staked": 0.0, "profit": 0.0})
+        by_name: dict[str, list[Bet]] = defaultdict(list)
         for b in resolved:
-            t = teams[b.bet_on]
-            t["bets"] += 1
-            t["won"] += int(b.is_won)
-            t["staked"] += b.stake
-            t["profit"] += b.profit
-        out = []
-        for name, t in sorted(teams.items(), key=lambda x: x[1]["profit"], reverse=True):
-            out.append({
-                "team": name, "bets": t["bets"], "won": t["won"],
-                "lost": t["bets"] - t["won"],
-                "win_rate": round(t["won"] / t["bets"], 4),
-                "profit": round(t["profit"], 2),
-                "roi": round(t["profit"] / t["staked"] * 100, 2) if t["staked"] else 0})
-        return out
+            by_name[b.bet_on].append(b)
+        return sorted(
+            [{"team": name, **self._group_stats(bets)} for name, bets in by_name.items()],
+            key=lambda x: x["profit"], reverse=True,
+        )
 
     def _by_side(self, resolved: list[Bet]) -> dict:
-        sides = {"home": {"b": 0, "w": 0, "s": 0.0, "p": 0.0},
-                 "away": {"b": 0, "w": 0, "s": 0.0, "p": 0.0}}
-        for b in resolved:
-            x = sides.get(b.bet_side, sides["home"])
-            x["b"] += 1; x["w"] += int(b.is_won)
-            x["s"] += b.stake; x["p"] += b.profit
-        out = {}
-        for side, x in sides.items():
-            out[side] = {
-                "bets": x["b"], "won": x["w"], "lost": x["b"] - x["w"],
-                "win_rate": round(x["w"] / x["b"], 4) if x["b"] else 0,
-                "profit": round(x["p"], 2),
-                "roi": round(x["p"] / x["s"] * 100, 2) if x["s"] else 0}
-        return out
+        return {
+            side: self._group_stats([b for b in resolved if b.bet_side == side])
+            for side in ("home", "away")
+        }
 
     def _by_odds_range(self, resolved: list[Bet]) -> list[dict]:
         return self._group_by_range(resolved, [
@@ -701,22 +669,30 @@ class BettingTracker:
     # ══════════════════════════════════════════════════════════════════════
 
     @staticmethod
+    def _group_stats(group: list) -> dict:
+        """Berechnet Standard-Statistiken für eine beliebige Wettgruppe."""
+        n = len(group)
+        if n == 0:
+            return {"bets": 0, "won": 0, "lost": 0, "win_rate": 0.0,
+                    "profit": 0.0, "roi": 0.0, "avg_odds": 0.0, "avg_edge": 0.0}
+        w = sum(1 for b in group if b.is_won)
+        p = sum(b.profit for b in group)
+        s = sum(b.stake for b in group)
+        return {
+            "bets": n, "won": w, "lost": n - w,
+            "win_rate": round(w / n, 4),
+            "profit": round(p, 2),
+            "roi": round(p / s * 100, 2) if s else 0,
+            "avg_odds": round(sum(b.odds for b in group) / n, 2),
+            "avg_edge": round(sum(b.edge for b in group) / n, 4),
+        }
+
+    @staticmethod
     def _group_by_range(bets, ranges, key) -> list[dict]:
         out = []
         for label, lo, hi in ranges:
             g = [b for b in bets if lo <= key(b) < hi]
-            if not g:
-                out.append({"range": label, "bets": 0, "won": 0, "lost": 0,
-                            "win_rate": 0, "profit": 0, "roi": 0, "avg_odds": 0})
-                continue
-            w = sum(1 for b in g if b.is_won)
-            p = sum(b.profit for b in g)
-            s = sum(b.stake for b in g)
-            out.append({
-                "range": label, "bets": len(g), "won": w, "lost": len(g) - w,
-                "win_rate": round(w / len(g), 4), "profit": round(p, 2),
-                "roi": round(p / s * 100, 2) if s else 0,
-                "avg_odds": round(sum(b.odds for b in g) / len(g), 2)})
+            out.append({"range": label, **BettingTracker._group_stats(g)})
         return out
 
     @staticmethod

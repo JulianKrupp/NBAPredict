@@ -16,6 +16,7 @@ import sys
 import threading
 from dataclasses import asdict
 from datetime import date
+from functools import wraps
 from pathlib import Path
 
 # Projektstamm zum Python-Pfad hinzufügen
@@ -58,6 +59,18 @@ bet_resolver = BetResolver(config, bet_tracker)
 _training_status: dict = {"running": False, "step": "", "done": False, "error": ""}
 
 
+def handle_errors(f):
+    """Decorator: fängt Exceptions in API-Routen ab und gibt JSON 500 zurück."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except Exception as exc:
+            logger.error("%s: %s", f.__name__, exc)
+            return jsonify({"error": str(exc)}), 500
+    return wrapper
+
+
 # ── Frontend ausliefern ───────────────────────────────────────────────────────
 
 @app.route("/")
@@ -68,76 +81,69 @@ def index():
 # ── API: Standings ─────────────────────────────────────────────────────────────
 
 @app.route("/api/standings")
+@handle_errors
 def get_standings():
     season = request.args.get("season", 2024, type=int)
-    try:
-        teams = nba_client.get_standings(season)
-        return jsonify([{
-            "name":        t.name,
-            "wins":        t.wins,
-            "losses":      t.losses,
-            "win_rate":    round(t.win_rate, 3),
-            "pts":         round(t.avg_points_scored, 1),
-            "pts_allowed": round(t.avg_points_allowed, 1),
-            "pt_diff":     round(t.point_differential, 1),
-            "home_wr":     round(t.home_win_rate, 3),
-            "away_wr":     round(t.away_win_rate, 3),
-        } for t in teams])
-    except Exception as exc:
-        logger.error("Standings-Fehler: %s", exc)
-        return jsonify({"error": str(exc)}), 500
+    teams = nba_client.get_standings(season)
+    return jsonify([{
+        "name":        t.name,
+        "wins":        t.wins,
+        "losses":      t.losses,
+        "win_rate":    round(t.win_rate, 3),
+        "pts":         round(t.avg_points_scored, 1),
+        "pts_allowed": round(t.avg_points_allowed, 1),
+        "pt_diff":     round(t.point_differential, 1),
+        "home_wr":     round(t.home_win_rate, 3),
+        "away_wr":     round(t.away_win_rate, 3),
+    } for t in teams])
 
 
 # ── API: Scores ───────────────────────────────────────────────────────────────
 
 @app.route("/api/scores")
+@handle_errors
 def get_scores():
     game_date = request.args.get("date", str(date.today()))
-    try:
-        games = nba_client.get_games_by_date(game_date)
-        return jsonify([{
-            "id":         g.game_id,
-            "home":       g.home_team,
-            "away":       g.away_team,
-            "home_score": g.home_score,
-            "away_score": g.away_score,
-            "status":     g.status,
-            "date":       g.date,
-            "is_final":   g.is_final,
-            "is_live":    g.is_live,
-            "winner":     g.winner,
-        } for g in games])
-    except Exception as exc:
-        logger.error("Scores-Fehler: %s", exc)
-        return jsonify({"error": str(exc)}), 500
+    games = nba_client.get_games_by_date(game_date)
+    return jsonify([{
+        "id":         g.game_id,
+        "home":       g.home_team,
+        "away":       g.away_team,
+        "home_score": g.home_score,
+        "away_score": g.away_score,
+        "status":     g.status,
+        "date":       g.date,
+        "is_final":   g.is_final,
+        "is_live":    g.is_live,
+        "winner":     g.winner,
+    } for g in games])
 
 
 # ── API: Team ─────────────────────────────────────────────────────────────────
 
 @app.route("/api/team/<team_name>")
+@handle_errors
 def get_team(team_name: str):
-    try:
-        team = nba_client.get_team_stats(team_name)
-        if not team:
-            return jsonify({"error": f"Team '{team_name}' nicht gefunden"}), 404
-        return jsonify({
-            "name":        team.name,
-            "wins":        team.wins,
-            "losses":      team.losses,
-            "win_rate":    round(team.win_rate, 3),
-            "pts":         round(team.avg_points_scored, 1),
-            "pts_allowed": round(team.avg_points_allowed, 1),
-            "pt_diff":     round(team.point_differential, 1),
-            "home_wr":     round(team.home_win_rate, 3),
-            "away_wr":     round(team.away_win_rate, 3),
-        })
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+    team = nba_client.get_team_stats(team_name)
+    if not team:
+        return jsonify({"error": f"Team '{team_name}' nicht gefunden"}), 404
+    return jsonify({
+        "name":        team.name,
+        "wins":        team.wins,
+        "losses":      team.losses,
+        "win_rate":    round(team.win_rate, 3),
+        "pts":         round(team.avg_points_scored, 1),
+        "pts_allowed": round(team.avg_points_allowed, 1),
+        "pt_diff":     round(team.point_differential, 1),
+        "home_wr":     round(team.home_win_rate, 3),
+        "away_wr":     round(team.away_win_rate, 3),
+    })
 
 
 # ── API: Vorhersage ───────────────────────────────────────────────────────────
 
 @app.route("/api/predict", methods=["POST"])
+@handle_errors
 def predict():
     data = request.get_json() or {}
     home_name = data.get("home", "")
@@ -147,103 +153,96 @@ def predict():
     if not home_name or not away_name:
         return jsonify({"error": "home und away sind erforderlich"}), 400
 
-    try:
-        home_stats = nba_client.get_team_stats(home_name)
-        away_stats = nba_client.get_team_stats(away_name)
-        if not home_stats:
-            return jsonify({"error": f"Team '{home_name}' nicht gefunden"}), 404
-        if not away_stats:
-            return jsonify({"error": f"Team '{away_name}' nicht gefunden"}), 404
+    home_stats = nba_client.get_team_stats(home_name)
+    away_stats = nba_client.get_team_stats(away_name)
+    if not home_stats:
+        return jsonify({"error": f"Team '{home_name}' nicht gefunden"}), 404
+    if not away_stats:
+        return jsonify({"error": f"Team '{away_name}' nicht gefunden"}), 404
 
-        odds = odds_client.get_odds(home_name, away_name)
+    odds = odds_client.get_odds(home_name, away_name)
 
-        if use_ml and ml_predictor.is_model_available():
-            result = ml_predictor.predict(home_stats, away_stats, odds)
-            return jsonify({
-                "type":             "ml",
-                "home":             home_stats.name,
-                "away":             away_stats.name,
-                "ml_home_prob":     round(result.ml_home_win_probability, 3),
-                "ml_away_prob":     round(1 - result.ml_home_win_probability, 3),
-                "ml_winner":        result.ml_predicted_winner,
-                "ml_confidence":    result.ml_confidence,
-                "rule_home_prob":   round(result.rule_home_win_probability, 3),
-                "rule_away_prob":   round(1 - result.rule_home_win_probability, 3),
-                "rule_winner":      result.rule_predicted_winner,
-                "odds_home_prob":   round(result.odds_home_win_probability, 3) if result.odds_home_win_probability else None,
-                "odds_away_prob":   round(1 - result.odds_home_win_probability, 3) if result.odds_home_win_probability else None,
-                "odds_home_raw":    odds.odds_home if odds else None,
-                "odds_away_raw":    odds.odds_away if odds else None,
-                "home_score":       result.predicted_home_score,
-                "away_score":       result.predicted_away_score,
-                "consensus":        result.consensus_winner,
-                "agreement":        result.consensus_agreement_count,
-                "factors":          result.feature_contributions,
-            })
-        else:
-            predictor = GamePredictor()
-            result = predictor.predict(home_stats, away_stats, odds)
-            home_prob = result.win_probability if result.predicted_winner == "home" else 1 - result.win_probability
-            return jsonify({
-                "type":           "rule",
-                "home":           home_stats.name,
-                "away":           away_stats.name,
-                "rule_home_prob": round(home_prob, 3),
-                "rule_away_prob": round(1 - home_prob, 3),
-                "rule_winner":    result.predicted_winner,
-                "ml_home_prob":   None,
-                "odds_home_prob": odds.implied_home_probability / (odds.implied_home_probability + odds.implied_away_probability) if odds else None,
-                "home_score":     result.predicted_home_score,
-                "away_score":     result.predicted_away_score,
-                "factors":        result.factors,
-            })
-    except Exception as exc:
-        logger.error("Predict-Fehler: %s", exc)
-        return jsonify({"error": str(exc)}), 500
+    if use_ml and ml_predictor.is_model_available():
+        result = ml_predictor.predict(home_stats, away_stats, odds)
+        return jsonify({
+            "type":             "ml",
+            "home":             home_stats.name,
+            "away":             away_stats.name,
+            "ml_home_prob":     round(result.ml_home_win_probability, 3),
+            "ml_away_prob":     round(1 - result.ml_home_win_probability, 3),
+            "ml_winner":        result.ml_predicted_winner,
+            "ml_confidence":    result.ml_confidence,
+            "rule_home_prob":   round(result.rule_home_win_probability, 3),
+            "rule_away_prob":   round(1 - result.rule_home_win_probability, 3),
+            "rule_winner":      result.rule_predicted_winner,
+            "odds_home_prob":   round(result.odds_home_win_probability, 3) if result.odds_home_win_probability else None,
+            "odds_away_prob":   round(1 - result.odds_home_win_probability, 3) if result.odds_home_win_probability else None,
+            "odds_home_raw":    odds.odds_home if odds else None,
+            "odds_away_raw":    odds.odds_away if odds else None,
+            "home_score":       result.predicted_home_score,
+            "away_score":       result.predicted_away_score,
+            "consensus":        result.consensus_winner,
+            "agreement":        result.consensus_agreement_count,
+            "factors":          result.feature_contributions,
+        })
+    else:
+        predictor = GamePredictor()
+        result = predictor.predict(home_stats, away_stats, odds)
+        home_prob = result.win_probability if result.predicted_winner == "home" else 1 - result.win_probability
+        return jsonify({
+            "type":           "rule",
+            "home":           home_stats.name,
+            "away":           away_stats.name,
+            "rule_home_prob": round(home_prob, 3),
+            "rule_away_prob": round(1 - home_prob, 3),
+            "rule_winner":    result.predicted_winner,
+            "ml_home_prob":   None,
+            "odds_home_prob": odds.implied_home_probability / (odds.implied_home_probability + odds.implied_away_probability) if odds else None,
+            "home_score":     result.predicted_home_score,
+            "away_score":     result.predicted_away_score,
+            "factors":        result.factors,
+        })
 
 
 # ── API: Vergleich KI vs. Odds ────────────────────────────────────────────────
 
 @app.route("/api/compare")
+@handle_errors
 def compare():
     home = request.args.get("home")
     away = request.args.get("away")
-    try:
-        if home and away:
-            entry = comparison.run_comparison_for_teams(home, away)
-            entries = [entry] if entry else []
-        else:
-            entries = comparison.run_comparison()
+    if home and away:
+        entry = comparison.run_comparison_for_teams(home, away)
+        entries = [entry] if entry else []
+    else:
+        entries = comparison.run_comparison()
 
-        return jsonify([{
-            "home": e.home_team,
-            "away": e.away_team,
-            "ml_home": round(e.ml_home_prob, 3),
-            "ml_away": round(e.ml_away_prob, 3),
-            "ml_winner": e.ml_winner,
-            "odds_home": round(e.odds_home_prob, 3),
-            "odds_away": round(e.odds_away_prob, 3),
-            "odds_winner": e.odds_winner,
-            "odds_home_raw": e.odds_home_raw,
-            "odds_away_raw": e.odds_away_raw,
-            "diff": round(e.prob_difference, 3),
-            "agree": e.methods_agree,
-            "indicator": e.value_bet_indicator,
-            # ── Wettempfehlung ──
-            "bet_team": e.bet_team,
-            "bet_side": e.bet_side,
-            "bet_rating": e.bet_rating,
-            "bet_rating_label": e.bet_rating_label,
-            "bet_ev": round(e.best_ev, 4),
-            "bet_edge": round(e.edge, 4),
-            "bet_confidence": e.bet_confidence,
-            "bet_odds_raw": round(e.bet_odds_raw, 2),
-            "bet_ml_prob": round(e.bet_ml_prob, 3),
-            "bet_odds_prob": round(e.bet_odds_prob, 3),
-        } for e in entries])
-    except Exception as exc:
-        logger.error("Compare-Fehler: %s", exc)
-        return jsonify({"error": str(exc)}), 500
+    return jsonify([{
+        "home": e.home_team,
+        "away": e.away_team,
+        "ml_home": round(e.ml_home_prob, 3),
+        "ml_away": round(e.ml_away_prob, 3),
+        "ml_winner": e.ml_winner,
+        "odds_home": round(e.odds_home_prob, 3),
+        "odds_away": round(e.odds_away_prob, 3),
+        "odds_winner": e.odds_winner,
+        "odds_home_raw": e.odds_home_raw,
+        "odds_away_raw": e.odds_away_raw,
+        "diff": round(e.prob_difference, 3),
+        "agree": e.methods_agree,
+        "indicator": e.value_bet_indicator,
+        # ── Wettempfehlung ──
+        "bet_team": e.bet_team,
+        "bet_side": e.bet_side,
+        "bet_rating": e.bet_rating,
+        "bet_rating_label": e.bet_rating_label,
+        "bet_ev": round(e.best_ev, 4),
+        "bet_edge": round(e.edge, 4),
+        "bet_confidence": e.bet_confidence,
+        "bet_odds_raw": round(e.bet_odds_raw, 2),
+        "bet_ml_prob": round(e.bet_ml_prob, 3),
+        "bet_odds_prob": round(e.bet_odds_prob, 3),
+    } for e in entries])
 
 
 # ── API: Modell-Metriken ──────────────────────────────────────────────────────
@@ -306,29 +305,28 @@ def train_status():
 
 
 @app.route("/api/bets", methods=["GET"])
+@handle_errors
 def get_bets():
     status = request.args.get("status")
     limit = request.args.get("limit", 100, type=int)
-    try:
-        bets = bet_tracker.get_all_bets(limit=limit, status=status)
-        return jsonify([{
-            "id": b.id, "home_team": b.home_team, "away_team": b.away_team,
-            "bet_on": b.bet_on, "bet_side": b.bet_side,
-            "odds": b.odds, "stake": b.stake,
-            "ml_prob": round(b.ml_prob, 3), "odds_prob": round(b.odds_prob, 3),
-            "edge": round(b.edge, 4), "ev": round(b.ev, 4),
-            "bet_rating": b.bet_rating, "status": b.status,
-            "actual_winner": b.actual_winner,
-            "home_score": b.home_score, "away_score": b.away_score,
-            "payout": round(b.payout, 2), "profit": round(b.profit, 2),
-            "placed_at": b.placed_at, "resolved_at": b.resolved_at,
-            "model_version": b.model_version, "period_id": b.period_id,
-        } for b in bets])
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+    bets = bet_tracker.get_all_bets(limit=limit, status=status)
+    return jsonify([{
+        "id": b.id, "home_team": b.home_team, "away_team": b.away_team,
+        "bet_on": b.bet_on, "bet_side": b.bet_side,
+        "odds": b.odds, "stake": b.stake,
+        "ml_prob": round(b.ml_prob, 3), "odds_prob": round(b.odds_prob, 3),
+        "edge": round(b.edge, 4), "ev": round(b.ev, 4),
+        "bet_rating": b.bet_rating, "status": b.status,
+        "actual_winner": b.actual_winner,
+        "home_score": b.home_score, "away_score": b.away_score,
+        "payout": round(b.payout, 2), "profit": round(b.profit, 2),
+        "placed_at": b.placed_at, "resolved_at": b.resolved_at,
+        "model_version": b.model_version, "period_id": b.period_id,
+    } for b in bets])
 
 
 @app.route("/api/bets", methods=["POST"])
+@handle_errors
 def place_bet():
     data = request.get_json()
     if not data:
@@ -338,19 +336,16 @@ def place_bet():
     missing = [f for f in required if f not in data]
     if missing:
         return jsonify({"error": f"Felder fehlen: {', '.join(missing)}"}), 400
-    try:
-        bet = bet_tracker.place_bet(
-            home_team=data["home_team"], away_team=data["away_team"],
-            bet_on=data["bet_on"], bet_side=data["bet_side"],
-            odds=float(data["odds"]), ml_prob=float(data["ml_prob"]),
-            odds_prob=float(data["odds_prob"]), edge=float(data["edge"]),
-            ev=float(data["ev"]), bet_rating=data["bet_rating"],
-            stake=float(data.get("stake", 10.0)),
-            model_version=data.get("model_version"),
-        )
-        return jsonify({"success": True, "bet_id": bet.id})
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+    bet = bet_tracker.place_bet(
+        home_team=data["home_team"], away_team=data["away_team"],
+        bet_on=data["bet_on"], bet_side=data["bet_side"],
+        odds=float(data["odds"]), ml_prob=float(data["ml_prob"]),
+        odds_prob=float(data["odds_prob"]), edge=float(data["edge"]),
+        ev=float(data["ev"]), bet_rating=data["bet_rating"],
+        stake=float(data.get("stake", 10.0)),
+        model_version=data.get("model_version"),
+    )
+    return jsonify({"success": True, "bet_id": bet.id})
 
 
 @app.route("/api/bets/<int:bet_id>", methods=["DELETE"])
@@ -381,16 +376,14 @@ def reset_bets():
 
 
 @app.route("/api/bets/analytics")
+@handle_errors
 def bet_analytics():
     """Umfassende Effektivitäts-Analyse aller Wetten."""
-    try:
-        return jsonify(bet_tracker.get_analytics())
-    except Exception as exc:
-        logger.error("Analytics-Fehler: %s", exc)
-        return jsonify({"error": str(exc)}), 500
+    return jsonify(bet_tracker.get_analytics())
 
 
 @app.route("/api/bets/close-period", methods=["POST"])
+@handle_errors
 def close_period():
     """
     Schließt die aktuelle Wettperiode ab.
@@ -399,43 +392,32 @@ def close_period():
     Body (optional): { "label": "v3-endstand", "notes": "Vor Data-Leakage-Fix" }
     """
     data = request.get_json() or {}
-    label = data.get("label")
-    notes = data.get("notes", "")
-    try:
-        result = bet_tracker.close_period(label=label, notes=notes)
-        return jsonify({"success": True, **result})
-    except Exception as exc:
-        logger.error("Periode-Fehler: %s", exc)
-        return jsonify({"error": str(exc)}), 500
+    result = bet_tracker.close_period(label=data.get("label"), notes=data.get("notes", ""))
+    return jsonify({"success": True, **result})
 
 
 # ── API: Perioden auflisten ───────────────────────────────────────────────────
 
 @app.route("/api/bets/periods")
+@handle_errors
 def get_periods():
     """Gibt alle abgeschlossenen Perioden mit Zusammenfassung zurück."""
-    try:
-        return jsonify(bet_tracker.get_periods())
-    except Exception as exc:
-        logger.error("Perioden-Fehler: %s", exc)
-        return jsonify({"error": str(exc)}), 500
+    return jsonify(bet_tracker.get_periods())
 
 
 # ── API: Modellversionen auflisten ────────────────────────────────────────────
 
 @app.route("/api/bets/versions")
+@handle_errors
 def get_versions():
     """Listet alle Modellversionen mit Wett-Statistiken auf."""
-    try:
-        return jsonify(bet_tracker.get_versions())
-    except Exception as exc:
-        logger.error("Versions-Fehler: %s", exc)
-        return jsonify({"error": str(exc)}), 500
+    return jsonify(bet_tracker.get_versions())
 
 
 # ── API: Zwei Versionen vergleichen ───────────────────────────────────────────
 
 @app.route("/api/bets/version-compare")
+@handle_errors
 def version_compare():
     """
     Vergleicht zwei Modellversionen.
@@ -445,11 +427,7 @@ def version_compare():
     v2 = request.args.get("v2")
     if not v1 or not v2:
         return jsonify({"error": "Parameter v1 und v2 erforderlich"}), 400
-    try:
-        return jsonify(bet_tracker.get_version_comparison(v1, v2))
-    except Exception as exc:
-        logger.error("Vergleich-Fehler: %s", exc)
-        return jsonify({"error": str(exc)}), 500
+    return jsonify(bet_tracker.get_version_comparison(v1, v2))
 
 
 # ── API: Aktuelle Modellversion ───────────────────────────────────────────────
