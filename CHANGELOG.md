@@ -5,6 +5,70 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ---
 
+## [1.0.0] – Stabilitäts-Refactoring, CLI-Erweiterung & Website/CLI-Trennung
+
+Erste stabile Release-Version. Schwerpunkt auf Code-Qualität, klarer
+Aufgabentrennung zwischen Web-Interface und CLI sowie Reduzierung von
+Coderedundanz in den zentralen Modulen.
+
+### Hinzugefügt
+
+#### CLI – `bets`-Subkommando
+- **`main.py`**: Neues Subkommando `bets` mit fünf Unterkommandos:
+  - `bets list [--status open|won|lost|all]` – tabellarische Übersicht aller Wetten
+  - `bets stats` – vollständige Statistiken inkl. Rating-Aufschlüsselung
+  - `bets resolve` – automatisches Auflösen offener Wetten via `BetResolver`
+  - `bets reset` – Löschen aller Wetten mit doppelter Bestätigung
+  - `bets close-period [--label TEXT] [--notes TEXT]` – Periode abschließen
+
+### Geändert
+
+#### Code-Qualität: Fehlerbehandlung in `server.py`
+- **`handle_errors`-Decorator** ersetzt 12 identische `try/except`-Blöcke in allen
+  API-Routen. Jede Route wird jetzt mit `@handle_errors` dekoriert; Logging erfolgt
+  automatisch mit dem Funktionsnamen als Kontext.
+- Alle Route-Handler vereinfacht: kein verschachteltes `try/except` mehr nötig.
+
+#### Code-Qualität: Gruppen-Statistiken in `tracker.py`
+- **`_group_stats(group)`** extrahiert die gemeinsame Berechnung von won/lost/profit/
+  roi/avg_odds/avg_edge, die zuvor in `_by_rating`, `_by_team`, `_by_side` und
+  `_group_by_range` dupliziert war.
+- `_by_rating`: 19 → 5 Zeilen
+- `_by_team`: 16 → 5 Zeilen
+- `_by_side`: 12 → 3 Zeilen
+- `_group_by_range`: 13 → 4 Zeilen
+
+#### Website/CLI-Trennung
+- **Website** zeigt ausschließlich Nutzer-Funktionen: Standings, Spiele, KI-Vorhersage,
+  Quoten-Vergleich, Wetten platzieren/einsehen/löschen, Analytik, Versionsvergleich.
+- **Train-Tab entfernt**: KI-Training (`page-train`, Nav-Button, `loadMetrics()`,
+  `startTraining()`) vollständig aus Website entfernt. Training erfolgt ausschließlich
+  über `python main.py train`.
+- Admin-Aktionen (`resolveAllBets`, `confirmResetBets`, `closePeriod`) bleiben auf der
+  Website verfügbar und sind zusätzlich über das neue CLI-Kommando `bets` erreichbar.
+
+### Behoben
+- **`ResourceWarning` (unclosed SQLite connections)**: `_connect()` in `tracker.py`
+  von direkter Connection-Rückgabe auf `@contextlib.contextmanager` umgestellt.
+  `finally: conn.close()` garantiert sauberes Schließen auch bei Exceptions.
+- **Docker WAL-Fehler**: `PRAGMA journal_mode=WAL` entfernt. WAL erfordert
+  Shared-Memory-Dateien (`bets.db-shm`), die auf Windows-NTFS-Volumes über WSL2
+  nicht unterstützt werden. Standard-Journaling ist für diesen Anwendungsfall
+  ausreichend.
+- **Blank-Page in Docker**: `send_from_directory` und `static_folder` auf absoluten
+  Pfad (`Path(__file__).parent / "static"`) umgestellt, damit die Pfadauflösung
+  unabhängig vom Arbeitsverzeichnis beim Containerstart korrekt funktioniert.
+- **Modellversion**: Neue Wetten wurden fälschlicherweise dem alten Format
+  `Logist_f45_a65` zugeordnet. Version liest jetzt `trained_at` aus
+  `model_metrics.json` und gibt `Logist_f45_2026-04-02` zurück.
+  `model_trainer.py` schreibt `trained_at` als ISO-Timestamp bei jedem Training.
+
+### Metriken
+- Gesamt-Codezeilen reduziert: −46 Zeilen (server.py −38, tracker.py −8)
+- Alle bestehenden Tests weiterhin grün (29/29 tracker, 23/23 comparison, 15/15 elo)
+
+---
+
 ## [0.9.0] – Containerisierung, erweitertes Test-Suite & Projekt-Professionalisierung
 
 Professionalisierung der Projekt-Infrastruktur: Docker-Container für reproduzierbare
