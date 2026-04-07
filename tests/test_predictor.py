@@ -210,3 +210,56 @@ class TestPredictionResult:
     def test_confidence_label_tossup(self):
         pr = PredictionResult("home", 0.51, 110.0, 109.0, {})
         assert pr.confidence_label == "Unentschieden / Knapp"
+
+
+class TestPredictorInternals:
+    """Tests für interne Hilfsmethoden des GamePredictor."""
+
+    def test_factor_weights_sum_to_one(self):
+        """Die Summe aller Faktor-Gewichte muss exakt 1.0 ergeben."""
+        from src.prediction.predictor import FACTOR_WEIGHTS
+        assert sum(FACTOR_WEIGHTS.values()) == pytest.approx(1.0)
+
+    def test_compare_stats_equal_values_return_half(self):
+        """Gleiche Heim- und Auswärtswerte → Score von 0.5."""
+        assert GamePredictor._compare_stats(0.5, 0.5) == pytest.approx(0.5)
+
+    def test_compare_stats_higher_home_gives_above_half(self):
+        """Höherer Heimwert → Score > 0.5."""
+        assert GamePredictor._compare_stats(0.7, 0.3) > 0.5
+
+    def test_compare_stats_zero_zero_returns_half(self):
+        """Beide Werte = 0 → Fallback auf 0.5."""
+        assert GamePredictor._compare_stats(0.0, 0.0) == pytest.approx(0.5)
+
+    def test_normalize_probability_clamps_to_minimum(self):
+        """Raw-Score von 0.0 wird auf Minimum 0.10 begrenzt."""
+        result = GamePredictor()._normalize_to_probability(0.0)
+        assert result == pytest.approx(0.10)
+
+    def test_normalize_probability_clamps_to_maximum(self):
+        """Raw-Score von 1.0 wird auf Maximum 0.90 begrenzt."""
+        result = GamePredictor()._normalize_to_probability(1.0)
+        assert result == pytest.approx(0.90)
+
+    def test_normalize_probability_half_gives_half(self):
+        """Raw-Score von 0.5 → Wahrscheinlichkeit 0.5."""
+        result = GamePredictor()._normalize_to_probability(0.5)
+        assert result == pytest.approx(0.5)
+
+    def test_fatigued_home_team_scores_fewer_points(self):
+        """Ein B2B-Heimteam (days_rest=0) erzielt weniger Punkte als ein ausgeruhtes."""
+        from src.models.team import Team
+        # Ausgeruht: 3 Ruhetage, normale Spieldichte → fatigue_score ≈ 0.0
+        fresh = Team(team_id=1, name="Fresh", abbreviation="FRS",
+                     wins=40, losses=20, days_rest=3, games_last_7_days=2)
+        # Ermüdet: Back-to-Back, hohe Spieldichte → fatigue_score = 1.0
+        tired = Team(team_id=2, name="Tired", abbreviation="TRD",
+                     wins=40, losses=20, days_rest=0, games_last_7_days=4)
+        opponent = Team(team_id=3, name="Opponent", abbreviation="OPP",
+                        wins=40, losses=20, days_rest=2, games_last_7_days=3)
+
+        predictor = GamePredictor()
+        result_fresh = predictor.predict(fresh, opponent)
+        result_tired = predictor.predict(tired, opponent)
+        assert result_fresh.predicted_home_score > result_tired.predicted_home_score
