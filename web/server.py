@@ -37,7 +37,10 @@ from src.betting.resolver import BetResolver
 
 
 # ── App-Setup ─────────────────────────────────────────────────────────────────
-app = Flask(__name__, static_folder="static")
+# Absoluter Pfad zu web/static/ – funktioniert sowohl lokal als auch in Docker,
+# unabhängig davon aus welchem Verzeichnis der Server gestartet wird.
+STATIC_DIR = Path(__file__).parent / "static"
+app = Flask(__name__, static_folder=str(STATIC_DIR))
 CORS(app)
 
 config = Config()
@@ -59,7 +62,7 @@ _training_status: dict = {"running": False, "step": "", "done": False, "error": 
 
 @app.route("/")
 def index():
-    return send_from_directory("static", "index.html")
+    return send_from_directory(str(STATIC_DIR), "index.html")
 
 
 # ── API: Standings ─────────────────────────────────────────────────────────────
