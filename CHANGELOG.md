@@ -5,6 +5,86 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ---
 
+## [0.9.0] – Containerisierung, erweitertes Test-Suite & Projekt-Professionalisierung
+
+Professionalisierung der Projekt-Infrastruktur: Docker-Container für reproduzierbare
+Deployments, 197 automatisierte Tests mit Coverage-Enforcement, `pyproject.toml`
+als moderner Python-Standard, sowie Ruff-Konfiguration für statische Code-Analyse.
+
+### Hinzugefügt
+
+#### Docker & Containerisierung
+- **`Dockerfile`** (Multi-Stage-Build): Builder-Stage installiert Abhängigkeiten,
+  Runtime-Stage ist schlank (python:3.12-slim). Inkl. Healthcheck auf `/api/standings`.
+- **`docker-compose.yml`**: `web`-Service startet den Flask-Server mit persistenten Volumes
+  (`./data`, `./logs`). Optionaler `resolver`-Service für automatisches Bet-Resolving
+  (auskommentiert, dokumentiert).
+- **`.dockerignore`**: Schließt `.venv/`, `.env`, `.git/`, Cache- und Testdateien aus dem
+  Image aus.
+- **`.env.example`**: Vorlage für Umgebungsvariablen mit Dokumentation aller Keys.
+  Start: `cp .env.example .env && nano .env`
+
+#### Projekt-Konfiguration
+- **`pyproject.toml`**: Moderner Python-Projektstandard mit `[project]`-Metadaten,
+  CLI-Einstiegspunkt (`nba = "main:main"`), `[tool.ruff]`-Konfiguration (100-Zeichen-Limit,
+  Regelsätze E/W/F/I/N/UP/B/SIM), `[tool.coverage]` und gespiegelte pytest-Konfiguration.
+
+#### Tests (neu: 197 gesamt, vorher ~120)
+- **`tests/test_comparison.py`** (neu): 23 Tests für `ComparisonEntry` und `OddsVsMLComparison`:
+  - Guardrail 1: Quote > 6.0 & ML-Prob < 70% → "none"
+  - Guardrail 2: Quote > 3.5 & Methoden uneinig → "none"
+  - Alle vier Edge-Stufen (strong/good/slight/none)
+  - EV-Formel, `bet_side`-Logik, `methods_agree`
+  - Vig-Normierung inkl. Randfall (Quote = 0)
+- **`tests/test_elo.py`** (neu): 15 Tests für das Elo-Rating-System:
+  - Nullsummen-Eigenschaft, Startwert 1500
+  - Heimvorteil (Auswärtssieg > Heimsieg für gleiche Teams)
+  - Margin-of-Victory-Multiplikator (Blowout > knapper Sieg)
+  - Saisonale Regression-to-Mean (Faktor 0.75)
+  - Daten-Leakage-Prävention in `calculate_elo_per_game` (Elo vor Spiel, nicht nach)
+  - Ausschluss nicht-abgeschlossener Spiele
+- **`tests/test_tracker.py`** (neu): 29 Tests für `BettingTracker` mit isolierter
+  In-Memory-Datenbank (`tmp_path`):
+  - `place_bet`: ID-Eindeutigkeit, Status, Persistenz, Modellversion
+  - `resolve_bet`: Auszahlungsformel, Endpunktstand, Doppelauflösung, Teil-Namens-Match
+  - `get_open_bets`: Filterung aufgelöster Wetten
+  - `get_stats`: Win-Rate, ROI, Won/Lost-Zähler
+- **`tests/test_predictor.py`** (ergänzt): Neue Klasse `TestPredictorInternals`:
+  - `FACTOR_WEIGHTS`-Summe = 1.0
+  - `_compare_stats` (Randwerte, Skala-Parameter)
+  - `_normalize_to_probability` (Klammerung auf [0.10, 0.90])
+  - Fatigue-Effekt auf Punkt-Schätzung (`days_rest=0` vs `days_rest=3`)
+
+### Nicht umgesetzt (erfordert Server/CI-Infrastruktur)
+
+| Feature | Begründung |
+|---------|-----------|
+| **GitHub Actions CI/CD** | Erfordert remote Repository mit Actions-Zugang. Workflow-Template: `.github/workflows/ci.yml` mit `pytest` + `docker build`. |
+| **Alembic Datenbankmigrationen** | Overkill für SQLite-Projektgröße; aktuelle manuelle `ALTER TABLE`-Checks in `tracker.py` sind ausreichend. |
+| **Produktions-Deployment** | Erfordert Server (VPS/Cloud). Docker-Image ist deployment-ready; fehlt nur Zielinfrastruktur. |
+
+### Verwendung
+
+```bash
+# Docker (empfohlen für Deployment)
+cp .env.example .env   # API-Keys eintragen
+docker compose up -d
+
+# Lokal (Entwicklung)
+pip install -r requirements.txt
+python web/server.py
+
+# Tests ausführen
+pytest                 # alle 197 Tests + Coverage
+pytest tests/test_comparison.py -v   # nur Guardrail-Tests
+
+# Code-Qualität prüfen
+ruff check src/        # Linting
+ruff format src/       # Formatierung
+```
+
+---
+
 ## [0.8.0] – Betting-Scores, Bet-Guardrails, Season-Fix & Modell-Neutraining
 
 Vier Bereiche verbessert: Abgeschlossene Wetten zeigen jetzt den Endpunktstand,
