@@ -22,7 +22,6 @@ function showPage(id) {
   const loaders = {
     standings: loadStandings,
     scores: loadScores,
-    train: loadMetrics,
     bets: loadBetsDashboard,
   };
   if (loaders[id]) loaders[id]();
@@ -727,6 +726,14 @@ async function resolveAllBets() {
   } catch (e) { alert('Fehler: ' + e.message); }
 }
 
+function confirmResetBets() {
+  if (!confirm('ALLE Wetten unwiderruflich löschen?')) return;
+  if (!confirm('Wirklich ALLE löschen? Das kann nicht rückgängig gemacht werden.')) return;
+  fetch(API + '/api/bets/reset', { method: 'POST' })
+    .then(() => loadBetsDashboard())
+    .catch(e => alert('Fehler: ' + e.message));
+}
+
 async function deleteBet(id) {
   if (!confirm('Wette löschen?')) return;
   try {
@@ -734,14 +741,6 @@ async function deleteBet(id) {
     const activeTab = document.querySelector('.bets-tab.active');
     if (activeTab) activeTab.click();
   } catch (e) { alert('Fehler: ' + e.message); }
-}
-
-function confirmResetBets() {
-  if (!confirm('ALLE Wetten unwiderruflich löschen?')) return;
-  if (!confirm('Wirklich ALLE löschen? Das kann nicht rückgängig gemacht werden.')) return;
-  fetch(API + '/api/bets/reset', { method: 'POST' })
-    .then(() => loadBetsDashboard())
-    .catch(e => alert('Fehler: ' + e.message));
 }
 
 // ══════════════════════════════════════════════════════
@@ -962,110 +961,6 @@ function renderKelly(kelly) {
 }
 
 // ══════════════════════════════════════════════════════
-//  METRICS / TRAIN
-// ══════════════════════════════════════════════════════
-async function loadMetrics() {
-  const el = document.getElementById('metrics-content');
-  try {
-    const m = await apiFetch('/api/metrics');
-    if (!m.available) {
-      el.innerHTML = `<div class="empty-msg"><div class="empty-icon">🤖</div><div class="empty-text">Kein trainiertes Modell vorhanden</div><div style="color:var(--text3);margin-top:8px;font-family:var(--mono);font-size:12px">Starte Training unten</div></div>`;
-      return;
-    }
-
-    const topFeatures = (m.top_features || []).slice(0, 8);
-    const featureRows = topFeatures.map(f => {
-      const name = typeof f === 'object' ? f.feature : f[0];
-      const imp = typeof f === 'object' ? f.importance : f[1];
-      const pct = (imp * 100).toFixed(1);
-      return `
-      <div class="feature-row">
-        <div class="feature-name">${name}</div>
-        <div class="feature-bar-wrap"><div class="feature-bar" style="width:${Math.min(imp * 400, 100)}%"></div></div>
-        <div class="feature-imp">${pct}%</div>
-      </div>`;
-    }).join('');
-
-    el.innerHTML = `
-    <div class="metrics-grid">
-      <div class="metric-card">
-        <div class="metric-val" style="color:var(--green)">${(m.accuracy * 100).toFixed(0)}<span class="metric-unit">%</span></div>
-        <div class="metric-name">Accuracy</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-val" style="color:var(--blue2)">${m.roc_auc?.toFixed(3)}</div>
-        <div class="metric-name">ROC-AUC</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-val">${m.brier_score?.toFixed(3)}</div>
-        <div class="metric-name">Brier Score</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-val" style="color:var(--orange2)">${(m.cv_accuracy_mean * 100).toFixed(0)}<span class="metric-unit">%</span></div>
-        <div class="metric-name">CV Accuracy</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-val">${m.train_samples}</div>
-        <div class="metric-name">Training-Samples</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-val" style="font-size:18px;color:var(--gold)">${m.model_name?.replace('Regression', 'Reg.') || '–'}</div>
-        <div class="metric-name">Bestes Modell</div>
-      </div>
-    </div>
-    ${topFeatures.length ? `
-    <div class="card-title" style="margin-top:16px">Top Features (Wichtigkeit)</div>
-    <div class="feature-list">${featureRows}</div>` : ''}`;
-  } catch (e) {
-    el.innerHTML = errorHtml(e.message);
-  }
-}
-
-async function startTraining() {
-  const btn = document.getElementById('train-btn');
-  const prog = document.getElementById('train-progress');
-  const step = document.getElementById('train-step');
-
-  const seasonsRaw = document.getElementById('train-seasons').value.trim();
-  const seasons = seasonsRaw.split(/\s+/).map(Number).filter(n => !isNaN(n));
-  const maxGames = parseInt(document.getElementById('train-maxgames').value) || 400;
-
-  btn.disabled = true;
-  prog.classList.add('show');
-  step.textContent = 'Starte Training...';
-
-  try {
-    await fetch(API + '/api/train', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: 'all', seasons, max_games: maxGames })
-    });
-    const poll = setInterval(async () => {
-      try {
-        const status = await apiFetch('/api/train/status');
-        step.textContent = status.step || 'Läuft...';
-        if (status.done) {
-          clearInterval(poll);
-          btn.disabled = false;
-          prog.classList.remove('show');
-          step.textContent = '';
-          loadMetrics();
-        } else if (!status.running && status.error) {
-          clearInterval(poll);
-          btn.disabled = false;
-          prog.classList.remove('show');
-          document.getElementById('metrics-content').innerHTML = errorHtml(status.error);
-        }
-      } catch { clearInterval(poll); btn.disabled = false; prog.classList.remove('show'); }
-    }, 1500);
-  } catch (e) {
-    btn.disabled = false;
-    prog.classList.remove('show');
-    document.getElementById('metrics-content').innerHTML = errorHtml(e.message);
-  }
-}
-
-// ══════════════════════════════════════════════════════
 //  TEAM DATALIST
 // ══════════════════════════════════════════════════════
 function updateTeamList() {
@@ -1114,7 +1009,6 @@ async function closePeriod() {
     alert('Fehler: ' + e.message);
   }
 }
-
 
 // ── Versionen laden ──────────────────────────────────
 

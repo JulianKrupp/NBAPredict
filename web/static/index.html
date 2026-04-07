@@ -34,10 +34,6 @@
     <span class="icon">💰</span>
     <span>Wetten</span>
   </button>
-  <button class="nav-btn" onclick="showPage('train')" id="nav-train">
-    <span class="icon">🤖</span>
-    <span>Train</span>
-  </button>
 </nav>
 
 <!-- MAIN CONTENT -->
@@ -157,39 +153,6 @@
     <div id="bets-tab-versions" class="bets-tab-content" style="display:none"></div>
   </div>
 
-  <!-- ══════════════════════ TRAIN ══════════════════════ -->
-  <div class="page" id="page-train">
-    <div class="page-header">
-      <div class="page-title">TRAINING</div>
-      <div class="page-sub">Modell-Metriken & Training</div>
-    </div>
-    <div class="card card-mb">
-      <div class="card-title">Aktuelle Modell-Metriken</div>
-      <div id="metrics-content">
-        <div class="loading"><div class="spinner"></div>Lade Metriken...</div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-title">Modell neu trainieren</div>
-      <div class="train-form">
-        <div class="input-group">
-          <label class="input-label">Saisons</label>
-          <input class="input-field" id="train-seasons" value="2022 2023 2024" style="min-width:180px;">
-        </div>
-        <div class="input-group">
-          <label class="input-label">Max. Spiele</label>
-          <input class="input-field" id="train-maxgames" type="number" value="400" style="min-width:120px;">
-        </div>
-        <button class="btn btn-primary" id="train-btn" onclick="startTraining()">
-          🤖 Training starten
-        </button>
-      </div>
-      <div class="train-progress" id="train-progress">
-        <div class="spinner"></div>
-        <div class="train-step" id="train-step">Starte...</div>
-      </div>
-    </div>
-  </div>
 
 </main>
 
