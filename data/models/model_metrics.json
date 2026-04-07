@@ -1,5 +1,6 @@
 {
   "model_name": "LogisticRegression",
+  "trained_at": "2026-04-02T00:00:00",
   "accuracy": 0.6495,
   "roc_auc": 0.6989,
   "brier_score": 0.2183,

@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from src.ml.model_trainer import ModelMetrics
 
 
-def display_ml_prediction(result: "MLPredictionResult") -> None:
+def display_ml_prediction(result: MLPredictionResult) -> None:
     """
     Gibt das vollständige ML-Vorhersageergebnis inkl. Methodenvergleich aus.
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,7 @@ class ModelMetrics:
     def to_dict(self) -> dict:
         return {
             "model_name":       self.model_name,
+            "trained_at":       datetime.now().isoformat(timespec="seconds"),
             "accuracy":         round(self.accuracy, 4),
             "roc_auc":          round(self.roc_auc, 4),
             "brier_score":      round(self.brier_score, 4),
