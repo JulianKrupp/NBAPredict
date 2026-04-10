@@ -1,81 +1,40 @@
-# 🏀 NBA Tracker mit KI-Vorhersagesystem
+# 🏀 NBA Predict
 
-Ein modulares Python-Programm zum Abrufen von NBA-Spielergebnissen, Teamstatistiken, KI-gestützten Spielvorhersagen und einem direkten Vergleich zwischen ML-Modell und Buchmacher-Wettquoten.
+NBA-Wettempfehlungssystem mit ML-Vorhersage, regelbasiertem Modell, Quoten-Vergleich und virtuellem Wett-Tracker. Läuft als Web-App (Docker) oder CLI.
 
 ---
 
 ## APIs
 
-| # | API | Zweck | Key erforderlich? |
-|---|-----|-------|-------------------|
-| 1 | [BallDontLie](https://www.balldontlie.io) | Spielergebnisse, Standings, Trainingsdaten | ✅ Kostenlos registrieren |
-| 2 | [The Odds API](https://the-odds-api.com) | Wettquoten, KI-vs-Quoten-Vergleich | ✅ 500/Monat gratis |
-| 3 | [nba_api](https://github.com/swar/nba_api) | Advanced Stats direkt von stats.nba.com | ❌ Kein Key nötig! |
+| # | API | Zweck | Key |
+|---|-----|-------|-----|
+| 1 | [BallDontLie](https://www.balldontlie.io) | Spielergebnisse, Scores, Trainingsdaten | ✅ Free Tier |
+| 2 | [The Odds API](https://the-odds-api.com) | Buchmacher-Quoten (500 Req/Monat) | ✅ Free Tier |
+| 3 | [nba_api](https://github.com/swar/nba_api) | Advanced Stats von stats.nba.com | ❌ Kein Key |
 
-**API 3 (`nba_api`)** ist ein Open-Source Python-Package das direkt stats.nba.com abfragt – komplett kostenlos, kein Account, kein Key. Einfach `pip install nba_api`.
-
----
-
-## Projektstruktur
-
-```
-nba_tracker/
-├── main.py
-├── requirements.txt
-├── pytest.ini
-├── .env.example
-│
-├── src/
-│   ├── api/
-│   │   ├── base_client.py          # HTTP-Basis (Retry, Cache, Fehlerbehandlung)
-│   │   ├── nba_api_client.py       # API 1: BallDontLie
-│   │   ├── nba_stats_client.py     # API 3: nba_api → stats.nba.com (kein Key!)
-│   │   └── odds_api_client.py      # API 2: The Odds API
-│   │
-│   ├── models/
-│   │   ├── game.py
-│   │   └── team.py
-│   │
-│   ├── ml/
-│   │   ├── data_collector.py       # Trainingsdaten-Pipeline
-│   │   ├── model_trainer.py        # RF / GB / LogReg, Cross-Validation
-│   │   ├── ml_predictor.py         # KI-Vorhersage + Methodenvergleich
-│   │   └── comparison.py           # KI vs. Wettquoten
-│   │
-│   ├── prediction/
-│   │   └── predictor.py            # Regelbasiertes Modell
-│   │
-│   └── utils/
-│       ├── config.py
-│       ├── display.py
-│       ├── ml_display.py
-│       └── logger.py
-│
-├── tests/
-│   ├── conftest.py
-│   ├── test_game.py
-│   ├── test_team.py
-│   ├── test_predictor.py
-│   ├── test_api_clients.py
-│   └── test_ml_system.py
-│
-└── data/
-    ├── training/                   # CSV + Metadaten
-    └── models/                     # Gespeichertes Modell + Metriken
-```
+> **Hinweis:** `nba_api` ist ein inoffizielles Community-Package das stats.nba.com abfragt. Kein Account nötig, aber künstliche Delays vermeiden Rate-Limiting.
 
 ---
 
-## Installation
+## Schnellstart
+
+### Docker (empfohlen)
 
 ```bash
-git clone https://github.com/dein-user/nba-tracker.git
-cd nba-tracker
+cp .env.example .env      # API-Keys eintragen
+docker compose up -d
+# → http://localhost:5000
+```
+
+### Lokal
+
+```bash
 python -m venv .venv
-source .venv/bin/activate      # Linux/macOS
-.venv\Scripts\activate         # Windows
+.venv\Scripts\activate    # Windows
+source .venv/bin/activate # Linux/macOS
 pip install -r requirements.txt
-cp .env.example .env           # Nur API 1 + 2 Keys eintragen
+cp .env.example .env
+python web/server.py
 ```
 
 ---
@@ -84,71 +43,121 @@ cp .env.example .env           # Nur API 1 + 2 Keys eintragen
 
 ```env
 BALLDONTLIE_API_KEY=...   # Pflicht  → balldontlie.io
-ODDS_API_KEY=...          # Optional → the-odds-api.com (für Wettquoten-Vergleich)
-# nba_api (stats.nba.com) braucht keinen Key!
+ODDS_API_KEY=...          # Optional → the-odds-api.com (für Quoten-Vergleich)
 ```
 
 ---
 
-## Verwendung
+## Web-Interface
+
+| Tab | Funktion |
+|-----|----------|
+| **Stand** | Tabelle berechnet aus Spielergebnissen (kein /standings-Endpunkt im Free Tier) |
+| **Spiele** | Scores nach Datum, Auto-Refresh 1–7 Uhr MEZ |
+| **KI** | Vorhersage: ML-Modell + Regelmodell + Wettquoten im Vergleich |
+| **Quoten** | KI vs. Buchmacher – Edge, EV, Wettempfehlung mit Guardrails |
+| **Wetten** | Virtueller Wett-Tracker mit Analytik (ROI, Win-Rate, Rating-Aufschlüsselung) |
+
+---
+
+## CLI
 
 ```bash
-# Klassische Befehle
+# Spieldaten
 python main.py live
 python main.py scores --date 2025-03-01
 python main.py standings
 python main.py team lakers
 
-# Regelbasierte Vorhersage
-python main.py predict lakers celtics
+# Vorhersage
+python main.py predict lakers celtics          # Regelbasiert
+python main.py ml-predict lakers celtics       # ML + Regelmodell + Quoten
 
-# ── KI-System ────────────────────────────────────────────────────────────────
-# Trainingsdaten sammeln (BallDontLie + nba_api)
-python main.py train collect --seasons 2022 2023 2024 --max-games 500
+# Quoten-Vergleich
+python main.py compare
+python main.py compare --home lakers --away celtics
 
-# Modell trainieren (Random Forest / Gradient Boosting / LogReg)
+# Training
+python main.py train collect --seasons 2022 2023 2024 --max-games 5000
 python main.py train model
-
-# Oder beides auf einmal:
 python main.py train all --seasons 2023 2024
-
-# Modell-Metriken anzeigen
 python main.py train metrics
 
-# KI-Vorhersage (ML-Modell + Regelmodell + Wettquoten im Vergleich)
-python main.py ml-predict lakers celtics
-
-# ── Vergleich KI vs. Wettquoten ───────────────────────────────────────────────
-python main.py compare                          # alle Spiele
-python main.py compare --home lakers --away celtics  # spezifisches Spiel
+# Wett-Verwaltung
+python main.py bets list [--status open|won|lost|all]
+python main.py bets stats
+python main.py bets resolve
+python main.py bets reset
+python main.py bets close-period [--label TEXT] [--notes TEXT]
 ```
 
 ---
 
-## ML-System: Features (33 gesamt)
+## ML-System
+
+### Features (45 gesamt)
 
 | Kategorie | Features |
 |-----------|----------|
-| Heimteam Basis | Win-Rate, Punkt-Diff, Ø Punkte scored/allowed, Heim/Auswärts-WR |
-| Heimteam Advanced (nba_api) | Off-Rating, Def-Rating, Net-Rating, Pace, True Shooting %, Form letzte 5/10 |
-| Auswärtsteam | identisch wie Heimteam |
-| Differenz-Features | Δ Win-Rate, Δ Punkt-Diff, Δ Net-Rating, Δ Form letzte 5 |
-| Wettquoten | implizite Heimsieg-Wahrscheinlichkeit (Vig-bereinigt) |
+| Heimteam Basis | Win-Rate, Punkt-Diff, Ø Pts scored/allowed, Heim/Auswärts-WR |
+| Heimteam Advanced | Off-Rating, Def-Rating, Net-Rating, Pace, True Shooting % |
+| Heimteam Form | letzte 5/10 Spiele, Streak, Fatigue-Score, Form-Rating, Ruhetage |
+| Auswärtsteam | identisch (18 Features) |
+| Differenz-Features | Δ Win-Rate, Δ Punkt-Diff, Δ Net-Rating, Δ Form, Δ Streak, Δ Fatigue |
+| Elo | home_elo, away_elo, diff_elo |
 
-### Modellauswahl per Cross-Validation
-Drei Kandidaten werden per 5-Fold Stratified CV verglichen:
-- **Random Forest** (200 Bäume, max_depth=8)
-- **Gradient Boosting** (150 Bäume, lr=0.05)
-- **Logistische Regression** (mit StandardScaler)
+### Modellauswahl
 
-### Ausgabe: KI vs. Wettquoten
+Vier Kandidaten werden per 5-Fold Stratified CV auf `neg_brier_score` verglichen:
+
+| Modell | Aufbau | Ergebnis |
+|--------|--------|---------|
+| **Logistic Regression** | StandardScaler + LogReg, C ∈ {0.1, 1, 10} | ✅ Gewinner – beste Kalibrierung |
+| Gradient Boosting | 150–300 Bäume, lr 0.03–0.08, max_depth 3–5 | ~gleiche Accuracy, schlechter kalibriert |
+| XGBoost | 200–400 Bäume, L1/L2-Regularisierung | ~gleiche Accuracy, overconfident |
+| Random Forest | 200–400 Bäume, max_depth 6–10, balanced | Schlechteste Kalibrierung |
+
+> **Warum Logistic Regression?** Scoring-Metrik ist `neg_brier_score` — misst nicht nur ob die Vorhersage stimmt, sondern ob die *Wahrscheinlichkeit* stimmt. Kalibrierte Wahrscheinlichkeiten sind entscheidend für die EV-Berechnung der Wettempfehlungen. LogReg ist inherent gut kalibriert, XGBoost/RF sind es nicht.
+
+### Aktuelle Metriken (v1.2.0, trainiert 2026-04-02)
+
+| Metrik | Wert |
+|--------|------|
+| Accuracy (Test) | 64.95% |
+| ROC-AUC | 0.6989 |
+| Brier Score | 0.2183 |
+| CV-Accuracy | 66.0% ± 1.7% |
+| Trainingssamples | 4504 (Saisons 2021–2025) |
+
+> **Einordnung:** Heimsieg-Baseline ~55%, reines Elo-Modell ~60%, Buchmacher ~67%.
+
+### Regelbasiertes Modell (`src/prediction/predictor.py`)
+
+Gewichteter Score aus 10 Faktoren (kein Training, immer verfügbar):
+
 ```
-══════════════════════════════════════════════════════════════════════════════
-  🤖 KI vs. 📊 Wettquoten – Vergleich der Siegwahrscheinlichkeiten
-══════════════════════════════════════════════════════════════════════════════
-  Spiel                           KI Heim   KI Ausw  Odds Heim Odds Ausw  Δ
-  ─────────────────────────────────────────────────────────────────────────
-  Lakers vs Celtics                 58.3%    41.7%     55.0%    45.0%   3.3%  ✅ ≈ Einig
+Win-Rate 18% · Punkt-Differenz 16% · Heimvorteil 12% · Form 12%
+Wettquoten 10% · Offense 8% · Defense 8% · Ruhetage 6%
+Verletzungen 6% · Streak 4%
+```
+
+Dient als Baseline, Fallback und Kreuzcheck gegenüber dem ML-Modell.
+
+### Wettempfehlung & Guardrails
+
+```
+Edge = KI-Prob − Buchmacher-Prob
+
+strong  → Edge > 15%
+good    → Edge > 8%
+slight  → Edge > 3%
+none    → darunter ODER Guardrail aktiv
+```
+
+**Guardrails:**
+```
+Quote > 6.0  UND  KI-Prob < 70%   →  "none"  (KI zu unsicher bei Außenseiter)
+Quote > 3.5  UND  Methoden uneinig →  "none"  (Markt und KI widersprechen sich)
 ```
 
 ---
@@ -156,25 +165,69 @@ Drei Kandidaten werden per 5-Fold Stratified CV verglichen:
 ## Tests
 
 ```bash
-pytest                        # Alle Tests mit Coverage-Report
-pytest tests/test_ml_system.py -v
-pytest --no-cov               # Ohne Coverage
+pytest                              # 197 Tests + Coverage
+pytest tests/test_comparison.py -v  # Guardrail-Tests
+pytest tests/test_elo.py -v         # Elo + Data-Leakage-Tests
+ruff check src/                     # Linting
+```
+
+| Datei | Tests | Schwerpunkt |
+|-------|-------|-------------|
+| `test_elo.py` | 15 | Nullsumme, Heimvorteil, MoV, Data Leakage |
+| `test_tracker.py` | 29 | place/resolve/stats, In-Memory-SQLite |
+| `test_comparison.py` | 23 | Guardrails, Edge-Stufen, EV-Formel, Vig |
+| `test_predictor.py` | ~15 | FACTOR_WEIGHTS, normalize, Fatigue |
+
+---
+
+## Projektstruktur
+
+```
+├── main.py                         # CLI-Einstiegspunkt
+├── pyproject.toml                  # Projekt-Konfiguration, Ruff, pytest
+├── Dockerfile                      # Multi-Stage-Build
+├── docker-compose.yml
+├── .env.example
+│
+├── src/
+│   ├── api/
+│   │   ├── base_client.py          # HTTP-Basis (Retry, Cache, Circuit Breaker)
+│   │   ├── nba_api_client.py       # BallDontLie API
+│   │   ├── nba_stats_client.py     # nba_api → stats.nba.com
+│   │   └── odds_api_client.py      # The Odds API
+│   │
+│   ├── betting/
+│   │   ├── tracker.py              # SQLite Wett-Tracker
+│   │   └── resolver.py             # Auto-Auflösung offener Wetten
+│   │
+│   ├── ml/
+│   │   ├── data_collector.py       # Trainingsdaten-Pipeline (45 Features)
+│   │   ├── elo.py                  # Elo-Rating-Berechnung
+│   │   ├── model_trainer.py        # LogReg / RF / GB / XGBoost + Grid Search
+│   │   ├── ml_predictor.py         # ML-Vorhersage
+│   │   └── comparison.py           # ML + Regelmodell vs. Wettquoten
+│   │
+│   ├── prediction/
+│   │   └── predictor.py            # Regelbasiertes Modell (10 Faktoren)
+│   │
+│   └── utils/
+│       ├── config.py
+│       ├── logger.py
+│       └── display.py
+│
+├── web/
+│   ├── server.py                   # Flask REST-API
+│   └── static/                     # index.html, app.js, style.css
+│
+├── tests/
+└── data/
+    ├── training/                   # CSV + Metadaten
+    ├── models/                     # model.joblib + model_metrics.json
+    └── betting/                    # bets.db (SQLite)
 ```
 
 ---
 
-## Git-Workflow
+## Commit-Konventionen
 
-```bash
-git init
-git add .
-git commit -m "Initial commit: NBA Tracker mit KI"
-
-# Feature-Branch
-git checkout -b feature/player-stats
-git commit -m "feat: Spieler-Statistiken hinzugefügt"
-git checkout main && git merge feature/player-stats
-```
-
-### Commit-Konventionen
-`feat:` | `fix:` | `test:` | `refactor:` | `docs:` | `chore:`
+`feat:` · `fix:` · `refactor:` · `test:` · `docs:` · `chore:`
