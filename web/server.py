@@ -78,6 +78,12 @@ def index():
     return send_from_directory(str(STATIC_DIR), "index.html")
 
 
+@app.route("/api/status")
+def api_status():
+    offline = nba_client.is_offline or odds_client.is_offline
+    return jsonify({"online": not offline})
+
+
 # ── API: Standings ─────────────────────────────────────────────────────────────
 
 @app.route("/api/standings")
@@ -447,4 +453,4 @@ if __name__ == "__main__":
     print("  🏀 NBA Tracker Web-Server")
     print("  http://localhost:5000")
     print("="*55 + "\n")
-    app.run(debug=False, port=5000, threaded=True)
+    app.run(host="0.0.0.0", debug=False, port=5000, threaded=True)
