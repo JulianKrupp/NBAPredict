@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ---
 
+## [1.2.0] – Regelmodell im Quoten-Tab & Circuit-Breaker-Fix
+
+### Hinzugefügt
+
+#### Regelbasiertes Modell im Quoten-Vergleich
+- **`ComparisonEntry`** um `rule_home_prob`, `rule_away_prob`, `rule_winner` erweitert.
+- **`OddsVsMLComparison`**: Neue Hilfsmethode `_rule_home_prob()` ruft `GamePredictor`
+  auf und normiert das Ergebnis auf eine Heimsieg-Wahrscheinlichkeit.
+  Wird in `_compare_single_game()` und `run_comparison_for_teams()` aufgerufen.
+- **`/api/compare`**: Response enthält jetzt `rule_home`, `rule_away`, `rule_winner`.
+- **Quoten-Tab (Frontend)**: Dritter Balken „Regel" (blau) zwischen ML und Odds.
+  Alle drei Modelle — ML, Regelmodell, Buchmacher — auf einen Blick vergleichbar.
+
+### Behoben
+
+- **Circuit Breaker global geteilt** (`src/api/base_client.py`): `_global_offline_until`
+  als Modul-Variable eingeführt. Ein DNS-Fehler in einem Client setzt alle Clients
+  auf Cooldown — verhindert dass z.B. der Odds-Client nach NBA-API-Ausfall trotzdem
+  30s wartet und einen Browser-seitigen `NetworkError` verursacht.
+- **`connect=0` in Retry-Konfiguration**: Kein Retry bei DNS/ConnectionError –
+  der Circuit Breaker übernimmt die Cooldown-Logik. HTTP-5xx-Retries (`total=3`)
+  bleiben unverändert.
+
+---
+
 ## [1.1.0] – Docker-Netzwerk-Fixes, Circuit Breaker & Offline-Banner
 
 Verbesserung der Docker-Betriebsstabilität: Der Container ist jetzt von außen
