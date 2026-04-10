@@ -21,7 +21,8 @@ class ApiError(Exception):
         self.status_code = status_code
 
 
-_OFFLINE_COOLDOWN = 60  # Sekunden bis zum nächsten Versuch nach ConnectionError
+_OFFLINE_COOLDOWN = 60          # Sekunden bis zum nächsten Versuch nach ConnectionError
+_global_offline_until: float = 0.0  # Geteilt über alle Client-Instanzen
 
 
 class BaseApiClient:
@@ -45,7 +46,7 @@ class BaseApiClient:
 
     @property
     def is_offline(self) -> bool:
-        return time.time() < self._offline_until
+        return time.time() < max(self._offline_until, _global_offline_until)
 
     def get(self, url: str, params: dict | None = None, headers: dict | None = None) -> Any:
         """GET-Request mit Cache. Wirft ApiError bei HTTP-Fehlern."""
@@ -66,6 +67,7 @@ class BaseApiClient:
         session = requests.Session()
         retry = Retry(
             total=self.config.max_retries,
+            connect=0,          # Kein Retry bei DNS/ConnectionError – Circuit Breaker übernimmt
             backoff_factor=self.config.retry_delay,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET"],
@@ -91,7 +93,9 @@ class BaseApiClient:
             self._raise_for_status(resp)
             return resp.json()
         except requests.exceptions.ConnectionError as exc:
-            self._offline_until = time.time() + _OFFLINE_COOLDOWN
+            global _global_offline_until
+            _global_offline_until = time.time() + _OFFLINE_COOLDOWN
+            self._offline_until   = _global_offline_until
             self.logger.error("API nicht erreichbar, pausiere %ds (DNS/Netzwerk)", _OFFLINE_COOLDOWN)
             raise ApiError(f"Verbindungsfehler: {exc}") from exc
         except requests.exceptions.Timeout:
