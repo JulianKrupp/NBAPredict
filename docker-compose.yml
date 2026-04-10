@@ -14,6 +14,9 @@ services:
       # Persistenz: Datenbank, Modelle und Trainingsdaten bleiben erhalten
       - ./data:/app/data
       - ./logs:/app/logs
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     env_file:
       - .env
     environment:
@@ -22,7 +25,7 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c",
-             "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/standings')"]
+             "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/status')"]
       interval: 30s
       timeout: 10s
       retries: 3
