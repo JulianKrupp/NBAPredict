@@ -441,8 +441,10 @@ async function loadCompare() {
     window._compareEntries = entries;
 
     const cards = entries.map((e, idx) => {
-      const hp = (e.ml_home * 100).toFixed(1);
-      const ap = (e.ml_away * 100).toFixed(1);
+      const hp  = (e.ml_home   * 100).toFixed(1);
+      const ap  = (e.ml_away   * 100).toFixed(1);
+      const rhp = (e.rule_home * 100).toFixed(1);
+      const rap = (e.rule_away * 100).toFixed(1);
       const ohp = (e.odds_home * 100).toFixed(1);
       const oap = (e.odds_away * 100).toFixed(1);
       const diff = (e.diff * 100).toFixed(1);
@@ -500,10 +502,17 @@ async function loadCompare() {
         <div class="compare-teams">${e.home} <span style="color:var(--text3)">vs</span> ${e.away}</div>
         <div class="compare-bars">
           <div class="compare-bar-row">
-            <div class="compare-bar-label" style="color:var(--orange)">KI</div>
+            <div class="compare-bar-label" style="color:var(--orange)">ML</div>
             <div class="compare-bar-track">
               <div class="prob-home" style="width:${hp}%;background:linear-gradient(90deg,var(--blue),var(--blue2));font-size:11px;">${hp}%</div>
               <div class="prob-away" style="width:${ap}%;background:linear-gradient(90deg,var(--orange),var(--orange2));font-size:11px;">${ap}%</div>
+            </div>
+          </div>
+          <div class="compare-bar-row">
+            <div class="compare-bar-label" style="color:#1e90ff">Regel</div>
+            <div class="compare-bar-track">
+              <div class="prob-home" style="width:${rhp}%;background:linear-gradient(90deg,#0a3d6b,#1e90ff);font-size:11px;">${rhp}%</div>
+              <div class="prob-away" style="width:${rap}%;background:linear-gradient(90deg,#6b3d0a,#ff9f1e);font-size:11px;">${rap}%</div>
             </div>
           </div>
           <div class="compare-bar-row">

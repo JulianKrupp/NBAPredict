@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from src.api.nba_api_client import NBAApiClient
 from src.api.odds_api_client import OddsApiClient, GameOdds
 from src.ml.ml_predictor import MLPredictor
+from src.prediction.predictor import GamePredictor
 from src.utils.config import Config
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,11 @@ class ComparisonEntry:
     ml_home_prob: float
     ml_away_prob: float
     ml_winner: str
+
+    # Regelbasiertes Modell
+    rule_home_prob: float
+    rule_away_prob: float
+    rule_winner: str
 
     # Wettquoten-Wahrscheinlichkeiten (normiert, Vig-bereinigt)
     odds_home_prob: float
@@ -184,7 +190,16 @@ class OddsVsMLComparison:
         self.nba_client = NBAApiClient(config)
         self.odds_client = OddsApiClient(config)
         self.ml_predictor = MLPredictor(config)
+        self.rule_predictor = GamePredictor()
         self.logger = logging.getLogger(__name__)
+
+    # ── Hilfsmethoden ────────────────────────────────────────────────────
+
+    def _rule_home_prob(self, home_stats, away_stats, odds) -> float:
+        """Regelbasierte Heimsieg-Wahrscheinlichkeit (0.0–1.0)."""
+        result = self.rule_predictor.predict(home_stats, away_stats, odds)
+        p = result.win_probability
+        return p if result.predicted_winner == "home" else 1.0 - p
 
     # ── Öffentliche Methoden ──────────────────────────────────────────────
 
@@ -234,6 +249,7 @@ class OddsVsMLComparison:
             return None
 
         ml_result = self.ml_predictor.predict(home_stats, away_stats, odds)
+        rule_hp = self._rule_home_prob(home_stats, away_stats, odds)
 
         if odds:
             odds_home_prob, odds_away_prob = self._normalize_odds(
@@ -250,6 +266,9 @@ class OddsVsMLComparison:
             ml_home_prob=ml_home_prob,
             ml_away_prob=1.0 - ml_home_prob,
             ml_winner="home" if ml_home_prob >= 0.5 else "away",
+            rule_home_prob=rule_hp,
+            rule_away_prob=1.0 - rule_hp,
+            rule_winner="home" if rule_hp >= 0.5 else "away",
             odds_home_prob=odds_home_prob,
             odds_away_prob=odds_away_prob,
             odds_winner="home" if odds_home_prob >= 0.5 else "away",
@@ -328,6 +347,7 @@ class OddsVsMLComparison:
         try:
             ml_result = self.ml_predictor.predict(home_stats, away_stats, odds)
             ml_home_prob = ml_result.ml_home_win_probability
+            rule_hp = self._rule_home_prob(home_stats, away_stats, odds)
 
             odds_home_prob, odds_away_prob = self._normalize_odds(
                 odds.odds_home, odds.odds_away
@@ -339,6 +359,9 @@ class OddsVsMLComparison:
                 ml_home_prob=ml_home_prob,
                 ml_away_prob=1.0 - ml_home_prob,
                 ml_winner="home" if ml_home_prob >= 0.5 else "away",
+                rule_home_prob=rule_hp,
+                rule_away_prob=1.0 - rule_hp,
+                rule_winner="home" if rule_hp >= 0.5 else "away",
                 odds_home_prob=odds_home_prob,
                 odds_away_prob=odds_away_prob,
                 odds_winner="home" if odds_home_prob >= 0.5 else "away",
