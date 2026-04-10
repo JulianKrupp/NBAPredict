@@ -5,6 +5,46 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ---
 
+## [1.1.0] – Docker-Netzwerk-Fixes, Circuit Breaker & Offline-Banner
+
+Verbesserung der Docker-Betriebsstabilität: Der Container ist jetzt von außen
+erreichbar, API-Ausfälle werden sauber abgefangen und dem Nutzer kommuniziert,
+und die Logs bleiben ruhig wenn die externe API nicht erreichbar ist.
+
+### Hinzugefügt
+
+- **Circuit Breaker** (`src/api/base_client.py`): Nach einem `ConnectionError`
+  pausiert der Client 60 Sekunden lang alle weiteren API-Versuche. Verhindert
+  Retry-Spam bei dauerhaft unerreichbarer API.
+  - Neues Property `is_offline` – prüft ob der Cooldown noch aktiv ist.
+- **`/api/status`-Endpunkt** (`web/server.py`): Gibt `{"online": true/false}`
+  zurück basierend auf dem Circuit-Breaker-Zustand von `nba_client` und
+  `odds_client`. Kein externer API-Call.
+- **Offline-Banner** (`web/static/index.html`, `app.js`): Roter Banner oben,
+  sobald `/api/status` meldet dass die NBA API nicht erreichbar ist.
+  Verschwindet automatisch bei Wiederherstellung der Verbindung. Polling alle 30s.
+
+### Geändert
+
+- **`app.run(host="0.0.0.0")`** (`web/server.py`): Flask lauschte bisher nur
+  auf `127.0.0.1` (Loopback) – Container war von außen nicht erreichbar.
+  Fix: explizites `host="0.0.0.0"`.
+- **DNS in Docker** (`docker-compose.yml`): `dns: [8.8.8.8, 1.1.1.1]` ergänzt
+  um DNS-Auflösung im Container zu gewährleisten.
+- **Healthcheck** (`docker-compose.yml`): Von `/api/standings` auf `/api/status`
+  umgestellt – verhindert dass der Healthcheck alle 30s einen externen API-Call
+  auslöst und den Circuit Breaker zurücksetzt.
+- **Log-Bereinigung** (`src/utils/logger.py`, `base_client.py`, `nba_api_client.py`):
+  - `urllib3.connectionpool` auf ERROR-Level gesetzt – Retry-Warnings unterdrückt
+    (der eigentliche Fehler wird bereits auf ERROR in den API-Clients geloggt).
+  - `RotatingFileHandler` in Docker (`FLASK_ENV=production`) deaktiviert –
+    verhindert `OSError: [Errno 5]` auf Windows-NTFS-Volumes via WSL2.
+  - Fehlertext bei `ConnectionError` auf einzeilige Zusammenfassung gekürzt.
+  - `Seitenladefehler` im paginierten Abruf: auf `DEBUG` reduziert wenn
+    Circuit Breaker bereits aktiv ist (kein doppelter ERROR-Eintrag).
+
+---
+
 ## [1.0.0] – Stabilitäts-Refactoring, CLI-Erweiterung & Website/CLI-Trennung
 
 Erste stabile Release-Version. Schwerpunkt auf Code-Qualität, klarer
