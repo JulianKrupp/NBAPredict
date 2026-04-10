@@ -21,6 +21,9 @@ class ApiError(Exception):
         self.status_code = status_code
 
 
+_OFFLINE_COOLDOWN = 60  # Sekunden bis zum nächsten Versuch nach ConnectionError
+
+
 class BaseApiClient:
     """
     Gemeinsame Basis für alle API-Clients.
@@ -28,6 +31,9 @@ class BaseApiClient:
     Kümmert sich um Session-Management, Retries bei temporären Fehlern
     (429, 5xx) und einen TTL-basierten Cache, damit identische Requests
     nicht mehrfach abgefeuert werden.
+
+    Enthält einen einfachen Circuit Breaker: Nach einem ConnectionError wird
+    für _OFFLINE_COOLDOWN Sekunden kein weiterer Versuch unternommen.
     """
 
     def __init__(self, config: Config) -> None:
@@ -35,6 +41,11 @@ class BaseApiClient:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._session = self._build_session()
         self._cache: dict[str, tuple[Any, float]] = {}
+        self._offline_until: float = 0.0
+
+    @property
+    def is_offline(self) -> bool:
+        return time.time() < self._offline_until
 
     def get(self, url: str, params: dict | None = None, headers: dict | None = None) -> Any:
         """GET-Request mit Cache. Wirft ApiError bei HTTP-Fehlern."""
@@ -65,15 +76,23 @@ class BaseApiClient:
         return session
 
     def _execute_request(self, url: str, params: dict | None, headers: dict | None) -> Any:
+        now = time.time()
+        if now < self._offline_until:
+            remaining = int(self._offline_until - now)
+            raise ApiError(f"API nicht erreichbar – nächster Versuch in {remaining}s")
+
         try:
             self.logger.debug("GET %s | params=%s", url, params)
             resp = self._session.get(
                 url, params=params, headers=headers,
                 timeout=self.config.request_timeout,
             )
+            self._offline_until = 0.0
             self._raise_for_status(resp)
             return resp.json()
         except requests.exceptions.ConnectionError as exc:
+            self._offline_until = time.time() + _OFFLINE_COOLDOWN
+            self.logger.error("API nicht erreichbar, pausiere %ds (DNS/Netzwerk)", _OFFLINE_COOLDOWN)
             raise ApiError(f"Verbindungsfehler: {exc}") from exc
         except requests.exceptions.Timeout:
             raise ApiError(f"Timeout nach {self.config.request_timeout}s für {url}")

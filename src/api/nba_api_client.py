@@ -151,7 +151,10 @@ class NBAApiClient(BaseApiClient):
             try:
                 resp = self.get(f"{self.base_url}/games", params=params, headers=self._default_headers)
             except ApiError as exc:
-                self.logger.error("Seitenladefehler (cursor=%s): %s", cursor, exc)
+                if self.is_offline:
+                    self.logger.debug("Seitenabfrage übersprungen – API offline")
+                else:
+                    self.logger.warning("Seitenladefehler (cursor=%s): %s", cursor, exc)
                 break
 
             raw_games = resp.get("data", [])
