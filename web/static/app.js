@@ -30,14 +30,41 @@ function showPage(id) {
 // ══════════════════════════════════════════════════════
 //  FETCH HELPER
 // ══════════════════════════════════════════════════════
+let _apiOffline = false;
+
+function _setOfflineBanner(offline) {
+  if (_apiOffline === offline) return;
+  _apiOffline = offline;
+  document.getElementById('offline-banner').style.display = offline ? 'block' : 'none';
+  document.querySelector('main.main').style.marginTop = offline ? '42px' : '';
+}
+
+async function checkApiStatus() {
+  try {
+    const s = await fetch(API + '/api/status').then(r => r.json());
+    _setOfflineBanner(!s.online);
+  } catch {
+    _setOfflineBanner(true);
+  }
+}
+
 async function apiFetch(url) {
   const res = await fetch(API + url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body.error) msg = body.error;
+    } catch {}
+    throw new Error(msg);
+  }
   return res.json();
 }
 
 function errorHtml(msg) {
-  return `<div class="error-msg">⚠ ${msg}</div>`;
+  const isOffline = msg.includes('nicht erreichbar') || msg.includes('Verbindungsfehler') || msg.includes('pausiere');
+  const text = isOffline ? 'NBA API nicht erreichbar – Daten können aktuell nicht geladen werden.' : msg;
+  return `<div class="error-msg">⚠ ${text}</div>`;
 }
 function loadingHtml(text = 'Lade Daten...') {
   return `<div class="loading"><div class="spinner"></div>${text}</div>`;
@@ -972,6 +999,8 @@ function updateTeamList() {
 //  INIT
 // ══════════════════════════════════════════════════════
 (async function init() {
+  checkApiStatus();
+  setInterval(checkApiStatus, 30000);
   initScores();
   loadStandings();
   loadScores();
