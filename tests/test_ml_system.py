@@ -354,10 +354,10 @@ class TestMLPredictor:
         assert result.odds_home_win_probability is not None
         assert 0.0 < result.odds_home_win_probability < 1.0
 
-    def test_consensus_agreement_count_is_1_to_3(self, mock_config):
+    def test_consensus_agreement_count_is_1_to_2(self, mock_config):
         predictor = MLPredictor(mock_config)
         result = predictor.predict(make_team("A"), make_team("B"))
-        assert 1 <= result.consensus_agreement_count <= 3
+        assert 1 <= result.consensus_agreement_count <= 2
 
     def test_build_feature_vector_has_correct_length(self, mock_config):
         """Feature-Vektor hat exakt 45 Einträge (v4 ohne odds)."""
@@ -380,36 +380,31 @@ class TestMLPredictor:
 
 class TestComparisonEntry:
 
-    def test_methods_agree_when_same_winner(self):
-        entry = ComparisonEntry(
+    def _make_entry(self, ml_home=0.65, odds_home_raw=1.67, odds_away_raw=2.50):
+        odds_h = 1.0 / odds_home_raw
+        odds_a = 1.0 / odds_away_raw
+        total = odds_h + odds_a
+        return ComparisonEntry(
             home_team="A", away_team="B",
-            ml_home_prob=0.65, ml_away_prob=0.35, ml_winner="home",
-            odds_home_prob=0.60, odds_away_prob=0.40, odds_winner="home",
-            odds_home_raw=1.67, odds_away_raw=2.50,
-            prob_difference=0.05,
+            ml_home_prob=ml_home, ml_away_prob=1 - ml_home,
+            ml_winner="home" if ml_home >= 0.5 else "away",
+            odds_home_prob=odds_h / total, odds_away_prob=odds_a / total,
+            odds_winner="home" if (odds_h / total) >= 0.5 else "away",
+            odds_home_raw=odds_home_raw, odds_away_raw=odds_away_raw,
+            prob_difference=abs(ml_home - odds_h / total),
         )
-        assert entry.methods_agree is True
 
-    def test_methods_disagree_when_different_winner(self):
-        entry = ComparisonEntry(
-            home_team="A", away_team="B",
-            ml_home_prob=0.45, ml_away_prob=0.55, ml_winner="away",
-            odds_home_prob=0.60, odds_away_prob=0.40, odds_winner="home",
-            odds_home_raw=1.67, odds_away_raw=2.50,
-            prob_difference=0.15,
-        )
-        assert entry.methods_agree is False
+    def test_ev_home_positive_when_ml_overestimates(self):
+        entry = self._make_entry(ml_home=0.75, odds_home_raw=1.80)
+        assert entry.ev_home == pytest.approx(0.75 * 1.80 - 1.0, abs=0.001)
 
-    def test_value_bet_indicator_returns_string(self):
-        entry = ComparisonEntry(
-            home_team="A", away_team="B",
-            ml_home_prob=0.55, ml_away_prob=0.45, ml_winner="home",
-            odds_home_prob=0.50, odds_away_prob=0.50, odds_winner="home",
-            odds_home_raw=2.0, odds_away_raw=2.0,
-            prob_difference=0.05,
-        )
-        assert isinstance(entry.value_bet_indicator, str)
-        assert len(entry.value_bet_indicator) > 0
+    def test_ev_away_computed_correctly(self):
+        entry = self._make_entry(ml_home=0.40, odds_away_raw=2.10)
+        assert entry.ev_away == pytest.approx(0.60 * 2.10 - 1.0, abs=0.001)
+
+    def test_edge_home_positive_when_ml_higher_than_odds(self):
+        entry = self._make_entry(ml_home=0.70, odds_home_raw=1.80)
+        assert entry.edge_home > 0
 
     def test_normalize_odds_removes_vig(self):
         h, a = OddsVsMLComparison._normalize_odds(1.90, 2.00)
