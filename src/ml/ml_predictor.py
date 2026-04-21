@@ -1,11 +1,7 @@
 """
-ML-basierter Spielvorhersager (v4).
+ML-basierter Spielvorhersager.
 
-Nutzt das trainierte Modell für Wahrscheinlichkeitsvorhersagen
-und kombiniert dessen Ergebnis mit dem regelbasierten Predictor.
-
-v4: odds_implied_home_prob aus Feature-Vektor entfernt (45 statt 46 Features).
-    Elo-Rating weiterhin als Feature.
+Nutzt das trainierte Logistic-Regression-Modell für Wahrscheinlichkeitsvorhersagen.
 """
 
 from __future__ import annotations
@@ -22,7 +18,6 @@ from src.api.nba_stats_client import NBAStatsApiClient, AdvancedTeamStats
 from src.ml.data_collector import TrainingSample
 from src.ml.elo import calculate_elo_ratings
 from src.ml.model_trainer import NBAModelTrainer, MODEL_PATH
-from src.prediction.predictor import GamePredictor, PredictionResult
 from src.utils.config import Config
 
 logger = logging.getLogger(__name__)
@@ -30,13 +25,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class MLPredictionResult:
-    """Erweitertes Vorhersageergebnis mit KI- und regelbasiertem Vergleich."""
+    """Vorhersageergebnis des ML-Modells."""
     ml_home_win_probability: float
     ml_predicted_winner: str
     ml_confidence: str
-
-    rule_home_win_probability: float
-    rule_predicted_winner: str
 
     odds_home_win_probability: float | None
     odds_predicted_winner: str | None
@@ -61,12 +53,11 @@ class MLPredictionResult:
 
 
 class MLPredictor:
-    """Kombiniert ML-Modell, Regelmodell und Wettquoten."""
+    """ML-Modell Vorhersage auf Basis von Logistic Regression."""
 
     def __init__(self, config: Config) -> None:
         self.config = config
         self.stats_client = NBAStatsApiClient(config)
-        self.rule_predictor = GamePredictor()
         self.trainer = NBAModelTrainer()
         self._model: Any | None = None
         self._elo_cache: dict[str, float] | None = None
@@ -80,25 +71,14 @@ class MLPredictor:
         away_team: Team,
         odds: GameOdds | None = None,
     ) -> MLPredictionResult:
-        """Erstellt eine vollständige ML-gestützte Vorhersage."""
-        # Advanced Stats laden
+        """Erstellt eine ML-gestützte Vorhersage."""
         home_adv = self._get_advanced_stats(home_team)
         away_adv = self._get_advanced_stats(away_team)
 
-        # KI-Vorhersage
         ml_home_prob = self._ml_predict(home_team, away_team, home_adv, away_adv, odds)
         ml_winner = "home" if ml_home_prob >= 0.5 else "away"
         ml_confidence = self._confidence_label(
             ml_home_prob if ml_winner == "home" else 1.0 - ml_home_prob
-        )
-
-        # Regelbasierte Vorhersage
-        rule_result: PredictionResult = self.rule_predictor.predict(home_team, away_team, odds)
-        rule_winner = rule_result.predicted_winner
-        rule_home_prob = (
-            rule_result.win_probability
-            if rule_winner == "home"
-            else 1.0 - rule_result.win_probability
         )
 
         # Wettquoten-Wahrscheinlichkeit
@@ -110,26 +90,28 @@ class MLPredictor:
                 odds_home_prob = odds.implied_home_probability / total
                 odds_winner = "home" if odds_home_prob >= 0.5 else "away"
 
-        # Konsens berechnen
-        winners = [ml_winner, rule_winner]
+        # Konsens ML vs Odds
+        winners = [ml_winner]
         if odds_winner:
             winners.append(odds_winner)
         consensus = max(set(winners), key=winners.count)
         agreement_count = winners.count(consensus)
 
+        # Geschätzte Scores aus Team-Durchschnitt
+        predicted_home_score = (home_team.avg_points_scored + away_team.avg_points_allowed) / 2
+        predicted_away_score = (away_team.avg_points_scored + home_team.avg_points_allowed) / 2
+
         return MLPredictionResult(
             ml_home_win_probability=ml_home_prob,
             ml_predicted_winner=ml_winner,
             ml_confidence=ml_confidence,
-            rule_home_win_probability=rule_home_prob,
-            rule_predicted_winner=rule_winner,
             odds_home_win_probability=odds_home_prob,
             odds_predicted_winner=odds_winner,
             home_team=home_team.name,
             away_team=away_team.name,
-            predicted_home_score=rule_result.predicted_home_score,
-            predicted_away_score=rule_result.predicted_away_score,
-            feature_contributions=rule_result.factors,
+            predicted_home_score=round(predicted_home_score, 1),
+            predicted_away_score=round(predicted_away_score, 1),
+            feature_contributions=self._get_feature_contributions(),
             consensus_winner=consensus,
             consensus_agreement_count=agreement_count,
         )
@@ -157,17 +139,15 @@ class MLPredictor:
         home_adv: AdvancedTeamStats, away_adv: AdvancedTeamStats,
         odds: GameOdds | None,
     ) -> float:
-        """ML-Vorhersage. Fällt auf Regelmodell zurück wenn kein Modell da."""
+        """ML-Vorhersage. Fällt auf Win-Rate-Schätzung zurück wenn kein Modell da."""
         model = self._load_model()
 
         if model is None:
-            self.logger.info("Kein ML-Modell – nutze regelbasierte Vorhersage.")
-            rule = self.rule_predictor.predict(home_team, away_team, odds)
-            return (
-                rule.win_probability
-                if rule.predicted_winner == "home"
-                else 1.0 - rule.win_probability
-            )
+            self.logger.info("Kein ML-Modell – nutze Win-Rate-Schätzung.")
+            # Einfache Schätzung: Heimvorteil + Win-Rate-Differenz
+            base = 0.58  # Heimvorteil-Baseline
+            diff = (home_team.win_rate - away_team.win_rate) * 0.3
+            return float(np.clip(base + diff, 0.1, 0.9))
 
         feature_vector = self._build_feature_vector(
             home_team, away_team, home_adv, away_adv, odds,
@@ -179,12 +159,9 @@ class MLPredictor:
             return float(np.clip(prob, 0.05, 0.95))
         except Exception as exc:
             self.logger.error("ML-Vorhersagefehler: %s", exc)
-            rule = self.rule_predictor.predict(home_team, away_team, odds)
-            return (
-                rule.win_probability
-                if rule.predicted_winner == "home"
-                else 1.0 - rule.win_probability
-            )
+            base = 0.58
+            diff = (home_team.win_rate - away_team.win_rate) * 0.3
+            return float(np.clip(base + diff, 0.1, 0.9))
 
     def _build_feature_vector(
         self,
@@ -194,13 +171,7 @@ class MLPredictor:
     ) -> list[float]:
         """
         Erstellt den Feature-Vektor für das ML-Modell (45 Features).
-
-        v4: odds_implied_home_prob ENTFERNT – war im Training immer 0.5,
-        daher lernte das Modell nichts daraus. Bei Predict-Time kamen dann
-        echte Quoten rein → Train/Predict-Mismatch.
-
-        WICHTIG: Die Reihenfolge MUSS exakt mit
-        TrainingSample.get_feature_columns() übereinstimmen!
+        Reihenfolge MUSS exakt mit TrainingSample.get_feature_columns() übereinstimmen!
         """
         home_elo = self._get_team_elo(home.name)
         away_elo = self._get_team_elo(away.name)
@@ -258,18 +229,14 @@ class MLPredictor:
             home_elo,
             away_elo,
             home_elo - away_elo,
-
-            # v4: KEIN odds_implied_home_prob mehr!
         ]
 
     def _get_team_elo(self, team_name: str) -> float:
-        """Gibt das aktuelle Elo-Rating eines Teams zurück."""
         if self._elo_cache is None:
             self._elo_cache = self._compute_current_elo()
         return self._elo_cache.get(team_name, 1500.0)
 
     def _compute_current_elo(self) -> dict[str, float]:
-        """Berechnet Elo-Ratings aus den aktuellen Saisonspielen."""
         try:
             from src.api.nba_api_client import NBAApiClient
             from datetime import date
@@ -283,7 +250,6 @@ class MLPredictor:
             return {}
 
     def _get_advanced_stats(self, team: Team) -> AdvancedTeamStats:
-        """Baut AdvancedTeamStats aus Team-Basisdaten."""
         return self.stats_client.build_advanced_stats_from_basic(
             team_id=team.team_id,
             team_name=team.name,
@@ -295,20 +261,17 @@ class MLPredictor:
         )
 
     def _get_feature_contributions(self) -> dict[str, float]:
-        """Extrahiert Feature-Importances aus dem geladenen Modell."""
+        """Extrahiert Top-Feature-Importances aus dem Modell."""
         model = self._load_model()
         if model is None:
             return {}
         try:
             features = TrainingSample.get_feature_columns()
-            if hasattr(model, "feature_importances_"):
-                imp = model.feature_importances_
-            elif hasattr(model, "named_steps"):
-                clf = model.named_steps.get("clf")
-                if hasattr(clf, "coef_"):
-                    imp = np.abs(clf.coef_[0])
-                else:
-                    return {}
+            clf = model.named_steps.get("clf") if hasattr(model, "named_steps") else model
+            if hasattr(clf, "coef_"):
+                imp = np.abs(clf.coef_[0])
+            elif hasattr(clf, "feature_importances_"):
+                imp = clf.feature_importances_
             else:
                 return {}
             indices = np.argsort(imp)[::-1][:5]
@@ -325,13 +288,3 @@ class MLPredictor:
         if prob >= 0.52:
             return "Leicht bevorzugt"
         return "Knapp"
-
-    @staticmethod
-    def _compute_consensus(
-        ml_winner: str, rule_winner: str, odds_winner: str | None,
-    ) -> tuple[str, int]:
-        winners = [ml_winner, rule_winner]
-        if odds_winner:
-            winners.append(odds_winner)
-        consensus = max(set(winners), key=winners.count)
-        return consensus, winners.count(consensus)
