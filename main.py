@@ -3,10 +3,10 @@ NBA Tracker – Einstiegspunkt
 
 Subkommandos:
   live, scores, standings, team
-  predict, ml-predict
+  ml-predict
   train collect|model|all|metrics
   compare
-  bets list|stats|resolve|reset|close-period
+  bets list|stats|resolve|reset
 """
 
 import argparse
@@ -15,11 +15,10 @@ import logging
 
 from src.utils.logger import setup_logger
 from src.utils.config import Config
-from src.utils.display import display_games, display_prediction, display_standings
+from src.utils.display import display_games, display_standings
 from src.utils.ml_display import display_ml_prediction, display_model_metrics
 from src.api.nba_api_client import NBAApiClient
 from src.api.odds_api_client import OddsApiClient
-from src.prediction.predictor import GamePredictor
 from src.ml.ml_predictor import MLPredictor
 from src.ml.comparison import OddsVsMLComparison
 
@@ -37,10 +36,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
     sub.add_parser("standings")
     team_p = sub.add_parser("team")
     team_p.add_argument("team_name")
-
-    pred_p = sub.add_parser("predict")
-    pred_p.add_argument("home_team")
-    pred_p.add_argument("away_team")
 
     ml_p = sub.add_parser("ml-predict")
     ml_p.add_argument("home_team")
@@ -63,14 +58,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
     bets_p = sub.add_parser("bets")
     bets_sub = bets_p.add_subparsers(dest="bets_command")
-    bets_list_p = bets_sub.add_parser("list", help="Wetten anzeigen")
+    bets_list_p = bets_sub.add_parser("list")
     bets_list_p.add_argument("--status", choices=["open", "won", "lost", "all"], default="all")
-    bets_sub.add_parser("stats", help="Wett-Statistiken anzeigen")
-    bets_sub.add_parser("resolve", help="Offene Wetten automatisch auflösen")
-    bets_sub.add_parser("reset", help="Alle Wetten löschen (unwiderruflich)")
-    close_p = bets_sub.add_parser("close-period", help="Aktuelle Periode abschließen")
-    close_p.add_argument("--label", type=str, default=None)
-    close_p.add_argument("--notes", type=str, default="")
+    bets_sub.add_parser("stats")
+    bets_sub.add_parser("resolve")
+    bets_sub.add_parser("reset")
 
     return parser
 
@@ -117,17 +109,6 @@ def handle_team(nba_client, team_name):
     print(f"{'='*50}\n")
 
 
-def handle_predict(nba_client, odds_client, home_name, away_name):
-    home = nba_client.get_team_stats(home_name)
-    away = nba_client.get_team_stats(away_name)
-    if not home or not away:
-        print("Fehler: Team nicht gefunden.")
-        return
-    odds = odds_client.get_odds(home_name, away_name)
-    result = GamePredictor().predict(home, away, odds)
-    display_prediction(result, home.name, away.name)
-
-
 def handle_ml_predict(nba_client, odds_client, ml_predictor, home_name, away_name):
     home = nba_client.get_team_stats(home_name)
     away = nba_client.get_team_stats(away_name)
@@ -137,7 +118,6 @@ def handle_ml_predict(nba_client, odds_client, ml_predictor, home_name, away_nam
 
     if not ml_predictor.is_model_available():
         print("\n  ⚠️  Kein Modell vorhanden. Erst 'python main.py train all' ausführen.\n")
-        handle_predict(nba_client, odds_client, home_name, away_name)
         return
 
     odds   = odds_client.get_odds(home_name, away_name)
@@ -185,7 +165,7 @@ def handle_train(config, args):
         print("Verwendung: python main.py train [collect|model|all|metrics]")
 
 
-def handle_bets(config, args):
+def handle_bets(args):
     from src.betting.tracker import BettingTracker
     from src.betting.resolver import BetResolver
 
@@ -217,27 +197,20 @@ def handle_bets(config, args):
     elif cmd == "stats":
         stats = tracker.get_stats()
         d = stats.to_dict()
-        print(f"\n{'='*50}")
+        print(f"\n{'='*40}")
         print(f"  WETT-STATISTIKEN")
-        print(f"{'─'*50}")
-        print(f"  Gesamt:        {d['total_bets']} ({d['open_bets']} offen)")
-        print(f"  Bilanz:        {d['won']}W / {d['lost']}L")
-        print(f"  Win-Rate:      {d['win_rate']*100:.1f}%")
-        print(f"  Profit:        {d['total_profit']:+.2f}")
-        print(f"  ROI:           {d['roi']:+.1f}%")
-        print(f"  Ø Quote:       {d['avg_odds']:.2f}")
-        print(f"  Ø Edge:        {d['avg_edge']*100:.1f}%")
-        print(f"  Serie:         aktuell {d['current_streak']} | best {d['best_streak']}")
-        if d['profit_by_rating']:
-            print(f"{'─'*50}")
-            print(f"  Profit nach Rating:")
-            for rating, profit in sorted(d['profit_by_rating'].items()):
-                rec = d['record_by_rating'].get(rating, {})
-                w, l = rec.get('won', 0), rec.get('lost', 0)
-                print(f"    {rating:<10} {profit:+.2f}  ({w}W/{l}L)")
-        print(f"{'='*50}\n")
+        print(f"{'─'*40}")
+        print(f"  Gesamt:   {d['total_bets']} ({d['open_bets']} offen)")
+        print(f"  Bilanz:   {d['won']}W / {d['lost']}L")
+        print(f"  Win-Rate: {d['win_rate']*100:.1f}%")
+        print(f"  Profit:   {d['total_profit']:+.2f}")
+        print(f"  ROI:      {d['roi']:+.1f}%")
+        print(f"{'='*40}\n")
 
     elif cmd == "resolve":
+        config = Config()
+        for warning in config.validate():
+            print(f"[WARNUNG] {warning}")
         resolver = BetResolver(config)
         result = resolver.resolve_all_open()
         print(f"\n  Aufgelöst: {result['resolved']} ({result['won']}W / {result['lost']}L)")
@@ -251,27 +224,8 @@ def handle_bets(config, args):
         count = tracker.reset()
         print(f"  ✅ {count} Wetten gelöscht.\n")
 
-    elif cmd == "close-period":
-        label = getattr(args, "label", None)
-        notes = getattr(args, "notes", "")
-        result = tracker.close_period(label=label, notes=notes)
-        if result.get("success"):
-            print(f"\n  ✅ Periode #{result['period_id']} abgeschlossen")
-            print(f"  Label:    {result['label']}")
-            print(f"  Wetten:   {result['bets_closed']}")
-            print(f"  Win-Rate: {result['win_rate']*100:.1f}%")
-            print(f"  Profit:   {result['profit']:+.2f}")
-            print(f"  ROI:      {result['roi']:.1f}%\n")
-        else:
-            print(f"\n  ❌ {result.get('error', 'Unbekannter Fehler')}\n")
-
     else:
-        print("Verwendung: python main.py bets [list|stats|resolve|reset|close-period]")
-        print("  list [--status open|won|lost|all]")
-        print("  stats")
-        print("  resolve")
-        print("  reset")
-        print("  close-period [--label TEXT] [--notes TEXT]")
+        print("Verwendung: python main.py bets [list|stats|resolve|reset]")
 
 
 def handle_compare(config, home_name, away_name):
@@ -311,11 +265,10 @@ def main() -> int:
             "scores":     lambda: handle_scores(nba_client, args.date),
             "standings":  lambda: handle_standings(nba_client),
             "team":       lambda: handle_team(nba_client, args.team_name),
-            "predict":    lambda: handle_predict(nba_client, odds_client, args.home_team, args.away_team),
             "ml-predict": lambda: handle_ml_predict(nba_client, odds_client, ml_predictor, args.home_team, args.away_team),
             "train":      lambda: handle_train(config, args),
             "compare":    lambda: handle_compare(config, getattr(args, "home", None), getattr(args, "away", None)),
-            "bets":       lambda: handle_bets(config, args),
+            "bets":       lambda: handle_bets(args),
         }
 
         handler = dispatch.get(args.command)

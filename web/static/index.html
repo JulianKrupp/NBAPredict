@@ -82,7 +82,7 @@
   <div class="page" id="page-predict">
     <div class="page-header">
       <div class="page-title">KI-VORHERSAGE</div>
-      <div class="page-sub">ML-Modell · Regelmodell · Wettquoten</div>
+      <div class="page-sub">ML-Modell · Wettquoten im Vergleich</div>
     </div>
     <div class="card card-mb">
       <div class="predict-form">
@@ -93,13 +93,6 @@
         <div class="input-group">
           <label class="input-label">Auswärtsteam</label>
           <input class="input-field" id="pred-away" placeholder="z.B. celtics" list="team-list" autocomplete="off" spellcheck="false" oninput="predInputChanged()">
-        </div>
-        <div class="input-group">
-          <label class="input-label">Modell</label>
-          <select class="input-field" id="pred-mode">
-            <option value="ml">KI-Modell</option>
-            <option value="rule">Regelbasiert</option>
-          </select>
         </div>
         <button class="btn btn-primary" id="pred-btn" onclick="runPrediction()" disabled>
           Vorhersagen →
@@ -114,7 +107,7 @@
   <div class="page" id="page-compare">
     <div class="page-header">
       <div class="page-title">KI VS QUOTEN</div>
-      <div class="page-sub">Wahrscheinlichkeitsvergleich · Vig-bereinigt · Value-Bet-Analyse</div>
+      <div class="page-sub">Wahrscheinlichkeitsvergleich · Vig-bereinigt · EV-Analyse</div>
     </div>
     <div class="card card-mb">
       <div class="predict-form">
@@ -147,16 +140,12 @@
       <button class="bets-tab active" onclick="showBetsTab('dashboard')" id="btab-dashboard">Dashboard</button>
       <button class="bets-tab" onclick="showBetsTab('open')" id="btab-open">Offen</button>
       <button class="bets-tab" onclick="showBetsTab('history')" id="btab-history">Historie</button>
-      <button class="bets-tab" onclick="showBetsTab('analytics')" id="btab-analytics">Analyse</button>
-      <button class="bets-tab" onclick="showBetsTab('versions')" id="btab-versions">Versionen</button>
     </div>
     <div id="bets-tab-dashboard" class="bets-tab-content">
       <div class="loading"><div class="spinner"></div>Lade Statistiken...</div>
     </div>
     <div id="bets-tab-open" class="bets-tab-content" style="display:none"></div>
     <div id="bets-tab-history" class="bets-tab-content" style="display:none"></div>
-    <div id="bets-tab-analytics" class="bets-tab-content" style="display:none"></div>
-    <div id="bets-tab-versions" class="bets-tab-content" style="display:none"></div>
   </div>
 
 

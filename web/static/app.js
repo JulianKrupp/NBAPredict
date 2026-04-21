@@ -74,11 +74,8 @@ function loadingHtml(text = 'Lade Daten...') {
 //  AUTO-REFRESH SYSTEM
 // ══════════════════════════════════════════════════════
 
-// NBA Spielzeiten (MEZ): typisch 01:00–07:00 Uhr.
-// Außerhalb dieser Zeiten wird kein automatischer Refresh ausgelöst
-// um API-Limits (Free Tier) zu schonen. Scores-Only – Odds nie automatisch.
 const GAME_HOURS = { start: 1, end: 7 };
-const SCORES_REFRESH_MS = 5 * 60 * 1000; // 5 min während laufender Spiele
+const SCORES_REFRESH_MS = 5 * 60 * 1000;
 
 function isGameTime() {
   const h = new Date().getHours();
@@ -101,7 +98,6 @@ function scheduleScoresRefresh() {
       loadScores(true).catch(() => {}).finally(scheduleScoresRefresh);
     }, SCORES_REFRESH_MS);
   } else {
-    // Schläft bis 01:00 MEZ, dann erste Aktualisierung
     _autoRefreshTimer = setTimeout(scheduleScoresRefresh, msUntilNextGameTime());
   }
   updateRefreshStatus();
@@ -289,7 +285,6 @@ function predInputChanged() {
 async function runPrediction() {
   const home = document.getElementById('pred-home').value.trim();
   const away = document.getElementById('pred-away').value.trim();
-  const mode = document.getElementById('pred-mode').value;
   if (!home || !away) return;
 
   const resultEl = document.getElementById('predict-result');
@@ -300,7 +295,7 @@ async function runPrediction() {
     const r = await fetch(API + '/api/predict', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ home, away, ml: mode === 'ml' })
+      body: JSON.stringify({ home, away })
     });
     const d = await r.json();
     if (d.error) { resultEl.innerHTML = `<div class="card">${errorHtml(d.error)}</div>`; return; }
@@ -311,23 +306,21 @@ async function runPrediction() {
 }
 
 function renderPrediction(d, el) {
-  const homeProb = d.ml_home_prob ?? d.rule_home_prob;
-  const awayProb = 1 - homeProb;
+  const homeProb = d.ml_home_prob;
+  const awayProb = d.ml_away_prob;
   const hPct = (homeProb * 100).toFixed(1);
   const aPct = (awayProb * 100).toFixed(1);
 
-  const mlColor = '#ff5f1f';
-  const ruleColor = '#1e90ff';
+  const mlColor   = '#ff5f1f';
   const oddsColor = '#ffc107';
 
-  const mlWinner = d.ml_predicted_winner === 'home' ? d.home : d.away;
-  const ruleWinner = d.rule_predicted_winner === 'home' ? d.home : d.away;
-  const oddsWinner = d.odds_home_prob ? (d.odds_home_prob >= 0.5 ? d.home : d.away) : null;
+  const mlWinner    = d.ml_winner === 'home' ? d.home : d.away;
+  const oddsWinner  = d.odds_home_prob ? (d.odds_home_prob >= 0.5 ? d.home : d.away) : null;
 
   const methods = [
-    { label: 'ML-MODELL', color: mlColor, winner: mlWinner, hp: d.ml_home_prob, ap: d.ml_away_prob, available: d.ml_home_prob !== null },
-    { label: 'REGELMODELL', color: ruleColor, winner: ruleWinner, hp: d.rule_home_prob, ap: d.rule_away_prob, available: true },
-    { label: 'WETTQUOTEN', color: oddsColor, winner: oddsWinner, hp: d.odds_home_prob, ap: d.odds_away_prob, available: d.odds_home_prob !== null, raw: d.odds_home_raw ? `${d.odds_home_raw} / ${d.odds_away_raw}` : null },
+    { label: 'ML-MODELL',  color: mlColor,   winner: mlWinner,   hp: d.ml_home_prob,   ap: d.ml_away_prob,   available: d.ml_home_prob !== null },
+    { label: 'WETTQUOTEN', color: oddsColor, winner: oddsWinner, hp: d.odds_home_prob, ap: d.odds_away_prob, available: d.odds_home_prob !== null,
+      raw: d.odds_home_raw ? `${d.odds_home_raw} / ${d.odds_away_raw}` : null },
   ];
 
   const probBars = methods.map(m => {
@@ -371,15 +364,10 @@ function renderPrediction(d, el) {
     }).join('');
     factorsHtml = `
       <div style="margin-top:24px;">
-        <div class="card-title">Einflussfaktoren (Regelmodell)</div>
+        <div class="card-title">Einflussfaktoren</div>
         <div class="factors-grid">${rows}</div>
       </div>`;
   }
-
-  const agree = d.agreement ?? 2;
-  const consensusWinner = d.consensus === 'home' ? d.home : d.away;
-  const agreeIcon = agree >= 2 ? '✅' : '⚠️';
-  const agreeColor = agree >= 2 ? 'var(--green)' : 'var(--orange)';
 
   el.innerHTML = `
   <div class="card">
@@ -405,11 +393,11 @@ function renderPrediction(d, el) {
 
     <div class="prob-section">${probBars}</div>
 
-    <div class="consensus-box" style="border:1px solid ${agreeColor}33">
-      <div class="consensus-icon">${agreeIcon}</div>
+    <div class="consensus-box">
+      <div class="consensus-icon">🤖</div>
       <div>
-        <div class="consensus-label">Konsens · ${agree}/3 Methoden einig</div>
-        <div class="consensus-winner">${consensusWinner}</div>
+        <div class="consensus-label">ML-Vorhersage</div>
+        <div class="consensus-winner">${mlWinner}</div>
         <div class="consensus-sub">${d.ml_confidence ?? ''}</div>
       </div>
     </div>
@@ -419,7 +407,7 @@ function renderPrediction(d, el) {
 }
 
 // ══════════════════════════════════════════════════════
-//  COMPARE (MIT WETTEMPFEHLUNG + WETTE PLATZIEREN)
+//  COMPARE (KI vs QUOTEN + EV)
 // ══════════════════════════════════════════════════════
 async function loadCompare() {
   const el = document.getElementById('compare-content');
@@ -437,68 +425,49 @@ async function loadCompare() {
       return;
     }
 
-    // Speichere Daten global für placeBet
+    // Global speichern für placeBet
     window._compareEntries = entries;
 
     const cards = entries.map((e, idx) => {
       const hp  = (e.ml_home   * 100).toFixed(1);
       const ap  = (e.ml_away   * 100).toFixed(1);
-      const rhp = (e.rule_home * 100).toFixed(1);
-      const rap = (e.rule_away * 100).toFixed(1);
       const ohp = (e.odds_home * 100).toFixed(1);
       const oap = (e.odds_away * 100).toFixed(1);
       const diff = (e.diff * 100).toFixed(1);
       const diffClass = e.diff > 0.10 ? 'diff-big' : 'diff-small';
-      const agreeClass = e.agree ? 'agree' : 'disagree';
 
-      // Wettempfehlung
-      const rating = e.bet_rating || 'none';
-      const evPct = ((e.bet_ev || 0) * 100).toFixed(1);
-      const edgePct = ((e.bet_edge || 0) * 100).toFixed(1);
-      const conf = e.bet_confidence || 0;
-      const confColor = conf >= 60 ? 'var(--green)' : conf >= 30 ? 'var(--blue2)' : 'var(--text3)';
-      const evClass = e.bet_ev > 0 ? 'positive' : e.bet_ev < 0 ? 'negative' : '';
+      const evHomeColor = e.ev_home > 0 ? 'var(--green)' : 'var(--red)';
+      const evAwayColor = e.ev_away > 0 ? 'var(--green)' : 'var(--red)';
+      const edgeHomeSign = e.edge_home >= 0 ? '+' : '';
+      const edgeAwaySign = e.edge_away >= 0 ? '+' : '';
 
-      const betHtml = `
-        <div class="bet-recommendation bet-${rating}">
-          <div class="bet-header">
-            <div class="bet-label bet-${rating}">${e.bet_rating_label || '⏸️ Kein Value'}</div>
-            <div style="display:flex;align-items:center;gap:6px;">
-              <span style="font-size:10px;color:var(--text3);font-family:var(--mono)">${conf}%</span>
-              <div class="bet-confidence-bar">
-                <div class="bet-confidence-fill" style="width:${conf}%;background:${confColor}"></div>
-              </div>
-            </div>
+      const evHtml = `
+        <div class="bet-details" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+          <div style="font-size:10px;color:var(--text3);font-family:var(--head);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;grid-column:1/-1">Expected Value</div>
+          <div class="bet-detail">
+            <div class="bet-detail-label">${e.home}</div>
+            <div class="bet-detail-value" style="color:${evHomeColor}">${e.ev_home >= 0 ? '+' : ''}${(e.ev_home * 100).toFixed(1)}%</div>
+            <div style="font-size:10px;color:var(--text3);font-family:var(--mono)">Edge: ${edgeHomeSign}${(e.edge_home * 100).toFixed(1)}%</div>
           </div>
-          ${rating !== 'none' ? `
-          <div style="margin-bottom:10px;">
-            <span style="font-size:10px;color:var(--text3);font-family:var(--head);font-weight:700;letter-spacing:1px;text-transform:uppercase">Wette auf</span>
-            <span class="bet-team-name" style="margin-left:6px">${e.bet_team}</span>
-            <span style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-left:6px">@ ${e.bet_odds_raw}</span>
-          </div>` : ''}
-          <div class="bet-details">
-            <div class="bet-detail">
-              <div class="bet-detail-label">Expected Value</div>
-              <div class="bet-detail-value ${evClass}">${e.bet_ev > 0 ? '+' : ''}${evPct}%</div>
-            </div>
-            <div class="bet-detail">
-              <div class="bet-detail-label">Edge</div>
-              <div class="bet-detail-value">${e.bet_edge > 0 ? '+' : ''}${edgePct}%</div>
-            </div>
-            <div class="bet-detail">
-              <div class="bet-detail-label">KI vs Quote</div>
-              <div class="bet-detail-value">${((e.bet_ml_prob || 0) * 100).toFixed(1)}% / ${((e.bet_odds_prob || 0) * 100).toFixed(1)}%</div>
-            </div>
+          <div class="bet-detail">
+            <div class="bet-detail-label">${e.away}</div>
+            <div class="bet-detail-value" style="color:${evAwayColor}">${e.ev_away >= 0 ? '+' : ''}${(e.ev_away * 100).toFixed(1)}%</div>
+            <div style="font-size:10px;color:var(--text3);font-family:var(--mono)">Edge: ${edgeAwaySign}${(e.edge_away * 100).toFixed(1)}%</div>
           </div>
-          ${rating !== 'none' ? `
-          <button class="btn btn-primary" style="margin-top:10px;width:100%;font-size:12px;padding:8px"
-            onclick="placeBetFromCompare(${idx})">
-            💰 Wette platzieren (${e.bet_team} @ ${e.bet_odds_raw})
-          </button>` : ''}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;">
+          <button class="btn btn-secondary" style="font-size:11px;padding:7px"
+            onclick="placeBetFromCompare(${idx},'home')">
+            💰 ${e.home} @ ${e.odds_home_raw}
+          </button>
+          <button class="btn btn-secondary" style="font-size:11px;padding:7px"
+            onclick="placeBetFromCompare(${idx},'away')">
+            💰 ${e.away} @ ${e.odds_away_raw}
+          </button>
         </div>`;
 
       return `
-      <div class="compare-card ${agreeClass}">
+      <div class="compare-card">
         <div class="compare-teams">${e.home} <span style="color:var(--text3)">vs</span> ${e.away}</div>
         <div class="compare-bars">
           <div class="compare-bar-row">
@@ -506,13 +475,6 @@ async function loadCompare() {
             <div class="compare-bar-track">
               <div class="prob-home" style="width:${hp}%;background:linear-gradient(90deg,var(--blue),var(--blue2));font-size:11px;">${hp}%</div>
               <div class="prob-away" style="width:${ap}%;background:linear-gradient(90deg,var(--orange),var(--orange2));font-size:11px;">${ap}%</div>
-            </div>
-          </div>
-          <div class="compare-bar-row">
-            <div class="compare-bar-label" style="color:#1e90ff">Regel</div>
-            <div class="compare-bar-track">
-              <div class="prob-home" style="width:${rhp}%;background:linear-gradient(90deg,#0a3d6b,#1e90ff);font-size:11px;">${rhp}%</div>
-              <div class="prob-away" style="width:${rap}%;background:linear-gradient(90deg,#6b3d0a,#ff9f1e);font-size:11px;">${rap}%</div>
             </div>
           </div>
           <div class="compare-bar-row">
@@ -524,31 +486,23 @@ async function loadCompare() {
           </div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
-          <div class="compare-diff ${diffClass}">Δ ${diff}% · ${e.indicator}</div>
-          <div style="font-size:11px;color:${e.agree ? 'var(--green)' : 'var(--orange)'}">
-            ${e.agree ? '✓ Einig' : '⚠ Uneinig'}
-          </div>
+          <div class="compare-diff ${diffClass}">Δ ${diff}%</div>
+          <div style="font-size:10px;color:var(--text3);font-family:var(--mono)">${e.odds_home_raw} / ${e.odds_away_raw}</div>
         </div>
-        ${e.odds_home_raw ? `<div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:6px">Quote: ${e.odds_home_raw} / ${e.odds_away_raw}</div>` : ''}
-        ${betHtml}
+        ${evHtml}
       </div>`;
     }).join('');
 
-    const agreeCount = entries.filter(e => e.agree).length;
     const avgDiff = entries.reduce((s, e) => s + e.diff, 0) / entries.length;
-    const valueBets = entries.filter(e => e.bet_rating && e.bet_rating !== 'none').length;
-    const strongBets = entries.filter(e => e.bet_rating === 'strong' || e.bet_rating === 'good').length;
 
     el.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px;">
-      <div class="stat-badge"><div class="stat-val">${entries.length}</div><div class="stat-lbl">Spiele verglichen</div></div>
-      <div class="stat-badge"><div class="stat-val" style="color:var(--green)">${agreeCount}</div><div class="stat-lbl">KI & Quoten einig</div></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:16px;margin-bottom:20px;">
+      <div class="stat-badge"><div class="stat-val">${entries.length}</div><div class="stat-lbl">Spiele</div></div>
       <div class="stat-badge"><div class="stat-val">${(avgDiff * 100).toFixed(1)}%</div><div class="stat-lbl">Ø Abweichung</div></div>
-      <div class="stat-badge"><div class="stat-val" style="color:var(--orange)">${valueBets}</div><div class="stat-lbl">Value Bets${strongBets ? ` (${strongBets} stark)` : ''}</div></div>
     </div>
-    ${valueBets > 0 ? `<div style="background:rgba(255,95,31,0.08);border:1px solid rgba(255,95,31,0.2);border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:var(--text2);font-family:var(--mono);">
-      ⚠️ Wettempfehlungen basieren auf dem KI-Modell und garantieren keine Gewinne. Wette verantwortungsvoll.
-    </div>` : ''}
+    <div style="background:rgba(255,95,31,0.08);border:1px solid rgba(255,95,31,0.2);border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:var(--text2);font-family:var(--mono);">
+      ⚠️ EV-Werte basieren auf dem KI-Modell und garantieren keine Gewinne. Wette verantwortungsvoll.
+    </div>
     <div class="compare-row-grid">${cards}</div>`;
   } catch (e) {
     el.innerHTML = errorHtml(e.message);
@@ -568,8 +522,6 @@ function showBetsTab(tab) {
   if (tab === 'dashboard') loadBetsDashboard();
   else if (tab === 'open') loadOpenBets();
   else if (tab === 'history') loadBetsHistory();
-  else if (tab === 'analytics') loadBetsAnalytics();
-  else if (tab === 'versions') loadVersionComparison();
 }
 
 async function loadBetsDashboard() {
@@ -584,47 +536,23 @@ async function loadBetsDashboard() {
           <div class="empty-icon">💰</div>
           <div class="empty-text">Noch keine Wetten platziert</div>
           <div style="color:var(--text3);margin-top:8px;font-family:var(--mono);font-size:12px">
-            Gehe zu ⚖️ Quoten → Vergleichen und klicke "Wette platzieren"
+            Gehe zu ⚖️ Quoten → Vergleichen und klicke auf ein Team
           </div>
         </div>`;
       return;
     }
 
     const profitColor = stats.total_profit >= 0 ? 'var(--green)' : 'var(--red)';
-    const roiColor = stats.roi >= 0 ? 'var(--green)' : 'var(--red)';
-    const streakText = stats.current_streak > 0 ? `${stats.current_streak}W 🔥` :
-      stats.current_streak < 0 ? `${Math.abs(stats.current_streak)}L ❄️` : '–';
-
-    const ratingLabels = { strong: '🔥 Stark', good: '✅ Gut', slight: '💡 Leicht', none: '⏸️ Kein' };
-    let ratingHtml = '';
-    if (stats.record_by_rating) {
-      ratingHtml = Object.entries(stats.record_by_rating).map(([rating, r]) => `
-        <div class="rating-card">
-          <div class="rating-card-title">${ratingLabels[rating] || rating}</div>
-          <div style="font-family:var(--mono);font-size:13px;color:var(--text1)">${r.won}W / ${r.lost}L</div>
-          <div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-top:4px">
-            Profit: <span style="color:${r.profit >= 0 ? 'var(--green)' : 'var(--red)'}">${r.profit >= 0 ? '+' : ''}${r.profit}</span>
-            · ROI: ${r.roi >= 0 ? '+' : ''}${r.roi}%
-          </div>
-        </div>
-      `).join('');
-    }
+    const roiColor    = stats.roi >= 0 ? 'var(--green)' : 'var(--red)';
 
     el.innerHTML = `
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:14px;margin-bottom:20px;">
-        <div class="stat-badge"><div class="stat-val">${stats.won}W/${stats.lost}L</div><div class="stat-lbl">Bilanz</div></div>
+        <div class="stat-badge"><div class="stat-val">${stats.won}W / ${stats.lost}L</div><div class="stat-lbl">Bilanz</div></div>
         <div class="stat-badge"><div class="stat-val" style="color:${profitColor}">${stats.total_profit >= 0 ? '+' : ''}${stats.total_profit.toFixed(1)}</div><div class="stat-lbl">Profit</div></div>
         <div class="stat-badge"><div class="stat-val" style="color:${roiColor}">${stats.roi >= 0 ? '+' : ''}${stats.roi.toFixed(1)}%</div><div class="stat-lbl">ROI</div></div>
         <div class="stat-badge"><div class="stat-val">${(stats.win_rate * 100).toFixed(0)}%</div><div class="stat-lbl">Win-Rate</div></div>
-        <div class="stat-badge"><div class="stat-val">${stats.avg_odds.toFixed(2)}</div><div class="stat-lbl">Ø Quote</div></div>
-        <div class="stat-badge"><div class="stat-val">${streakText}</div><div class="stat-lbl">Serie</div></div>
         <div class="stat-badge"><div class="stat-val">${stats.open_bets}</div><div class="stat-lbl">Offen</div></div>
-        <div class="stat-badge"><div class="stat-val">${stats.total_staked.toFixed(0)}</div><div class="stat-lbl">Gesamt gesetzt</div></div>
-      </div>
-
-      <div class="card" style="margin-bottom:16px">
-        <div class="card-title">Profit nach Empfehlungsstufe</div>
-        <div class="rating-breakdown">${ratingHtml || '<div style="color:var(--text3)">Noch keine Daten</div>'}</div>
+        <div class="stat-badge"><div class="stat-val">${stats.total_bets}</div><div class="stat-lbl">Gesamt</div></div>
       </div>
 
       <div style="display:flex;gap:8px">
@@ -650,7 +578,7 @@ async function loadOpenBets() {
   } catch (e) { el.innerHTML = errorHtml(e.message); }
 }
 
-async function loadBetsHistory(filterVersion = '') {
+async function loadBetsHistory() {
   const el = document.getElementById('bets-tab-history');
   el.innerHTML = loadingHtml('Lade Wett-Historie...');
   try {
@@ -659,25 +587,7 @@ async function loadBetsHistory(filterVersion = '') {
       el.innerHTML = `<div class="empty-msg"><div class="empty-icon">📊</div><div class="empty-text">Noch keine Wetten</div></div>`;
       return;
     }
-
-    // Alle verfügbaren Versionen für Filter-Dropdown
-    const versions = [...new Set(bets.map(b => b.model_version).filter(Boolean))].sort();
-    const activeFilter = filterVersion || '';
-    const filtered = activeFilter ? bets.filter(b => b.model_version === activeFilter) : bets;
-
-    const versionOpts = `<option value="">Alle Versionen (${bets.length})</option>` +
-      versions.map(v => {
-        const count = bets.filter(b => b.model_version === v).length;
-        return `<option value="${v}" ${v === activeFilter ? 'selected' : ''}>${v} (${count})</option>`;
-      }).join('');
-
-    el.innerHTML = `
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
-        <label style="font-size:12px;color:var(--text3)">Version:</label>
-        <select onchange="loadBetsHistory(this.value)" style="min-width:200px">${versionOpts}</select>
-        <span style="font-size:12px;color:var(--text3);font-family:var(--mono)">${filtered.length} Wette${filtered.length !== 1 ? 'n' : ''}</span>
-      </div>
-      <div class="bets-grid">${filtered.map(renderBetCard).join('')}</div>`;
+    el.innerHTML = `<div class="bets-grid">${bets.map(renderBetCard).join('')}</div>`;
   } catch (e) { el.innerHTML = errorHtml(e.message); }
 }
 
@@ -699,10 +609,6 @@ function renderBetCard(b) {
         <div class="bet-card-stat">
           <div class="bet-card-stat-label">Einsatz</div>
           <div class="bet-card-stat-value">${b.stake.toFixed(1)}</div>
-        </div>
-        <div class="bet-card-stat">
-          <div class="bet-card-stat-label">Edge</div>
-          <div class="bet-card-stat-value">${(b.edge * 100).toFixed(1)}%</div>
         </div>
         <div class="bet-card-stat">
           <div class="bet-card-stat-label">EV</div>
@@ -727,24 +633,33 @@ function renderBetCard(b) {
     </div>`;
 }
 
-async function placeBetFromCompare(idx) {
+async function placeBetFromCompare(idx, side) {
   const e = window._compareEntries && window._compareEntries[idx];
   if (!e) { alert('Daten nicht gefunden'); return; }
+
+  const isHome   = side === 'home';
+  const betTeam  = isHome ? e.home : e.away;
+  const betOdds  = isHome ? e.odds_home_raw : e.odds_away_raw;
+  const mlProb   = isHome ? e.ml_home : e.ml_away;
+  const oddsProb = isHome ? e.odds_home : e.odds_away;
+  const edge     = isHome ? e.edge_home : e.edge_away;
+  const ev       = isHome ? e.ev_home : e.ev_away;
+
   try {
     const res = await fetch(API + '/api/bets', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         home_team: e.home, away_team: e.away,
-        bet_on: e.bet_team, bet_side: e.bet_side,
-        odds: e.bet_odds_raw, ml_prob: e.bet_ml_prob,
-        odds_prob: e.bet_odds_prob, edge: e.bet_edge,
-        ev: e.bet_ev, bet_rating: e.bet_rating, stake: 10.0,
+        bet_on: betTeam, bet_side: side,
+        odds: betOdds, ml_prob: mlProb,
+        odds_prob: oddsProb, edge, ev,
+        bet_rating: 'none', stake: 10.0,
       }),
     });
     const data = await res.json();
     if (data.success) {
-      alert(`Wette #${data.bet_id} platziert: ${e.bet_team} @ ${e.bet_odds_raw}`);
+      alert(`Wette #${data.bet_id} platziert: ${betTeam} @ ${betOdds}`);
     } else {
       alert('Fehler: ' + (data.error || 'Unbekannt'));
     }
@@ -780,223 +695,6 @@ async function deleteBet(id) {
 }
 
 // ══════════════════════════════════════════════════════
-//  BETTING ANALYTICS
-// ══════════════════════════════════════════════════════
-
-async function loadBetsAnalytics() {
-  const el = document.getElementById('bets-tab-analytics');
-  el.innerHTML = loadingHtml('Berechne Analyse...');
-  try {
-    const a = await apiFetch('/api/bets/analytics');
-    if (a.empty) {
-      el.innerHTML = `<div class="empty-msg"><div class="empty-icon">📊</div><div class="empty-text">Noch keine aufgelösten Wetten für die Analyse</div></div>`;
-      return;
-    }
-
-    el.innerHTML = `
-      ${renderProfitChart(a.profit_history)}
-      ${renderExpectedVsActual(a.expected_vs_actual, a.avg_profit_won, a.avg_profit_lost)}
-      ${renderCalibration(a.calibration)}
-      ${renderByRating(a.by_rating)}
-      ${renderBySide(a.by_side)}
-      ${renderByOddsRange(a.by_odds_range)}
-      ${renderByEdgeRange(a.by_edge_range)}
-      ${renderByTeam(a.by_team)}
-      ${renderWeekly(a.weekly)}
-      ${renderKelly(a.kelly_analysis)}
-    `;
-  } catch (e) { el.innerHTML = errorHtml(e.message); }
-}
-
-function renderProfitChart(history) {
-  if (!history || !history.length) return '';
-  const points = history.map((h, i) => {
-    const x = (i / Math.max(1, history.length - 1)) * 100;
-    const minY = Math.min(...history.map(p => p.cumulative));
-    const maxY = Math.max(...history.map(p => p.cumulative));
-    const range = maxY - minY || 1;
-    const y = 100 - ((h.cumulative - minY) / range) * 100;
-    return `${x},${y}`;
-  }).join(' ');
-  const last = history[history.length - 1];
-  const color = last.cumulative >= 0 ? 'var(--green)' : 'var(--red)';
-  return `
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Kumulativer Profitverlauf</div>
-      <svg viewBox="-2 -5 104 110" style="width:100%;height:180px;" preserveAspectRatio="none">
-        <line x1="0" y1="50" x2="100" y2="50" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="2"/>
-        <polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/>
-      </svg>
-      <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;color:var(--text3);margin-top:4px">
-        <span>Wette #1</span>
-        <span style="color:${color}">Aktuell: ${last.cumulative >= 0 ? '+' : ''}${last.cumulative}</span>
-        <span>Wette #${history.length}</span>
-      </div>
-    </div>`;
-}
-
-function renderExpectedVsActual(eva, avgWon, avgLost) {
-  if (!eva) return '';
-  const diffColor = eva.difference >= 0 ? 'var(--green)' : 'var(--red)';
-  return `
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Erwarteter vs Tatsächlicher Profit</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px">
-        <div class="stat-badge"><div class="stat-val" style="font-size:22px">${eva.expected_profit >= 0 ? '+' : ''}${eva.expected_profit}</div><div class="stat-lbl">Erwartet (EV)</div></div>
-        <div class="stat-badge"><div class="stat-val" style="font-size:22px;color:${eva.actual_profit >= 0 ? 'var(--green)' : 'var(--red)'}">${eva.actual_profit >= 0 ? '+' : ''}${eva.actual_profit}</div><div class="stat-lbl">Tatsächlich</div></div>
-        <div class="stat-badge"><div class="stat-val" style="font-size:22px;color:${diffColor}">${eva.difference >= 0 ? '+' : ''}${eva.difference}</div><div class="stat-lbl">Differenz</div></div>
-        <div class="stat-badge"><div class="stat-val" style="font-size:22px;color:var(--green)">+${avgWon}</div><div class="stat-lbl">Ø Gewinn/Wette</div></div>
-        <div class="stat-badge"><div class="stat-val" style="font-size:22px;color:var(--red)">${avgLost}</div><div class="stat-lbl">Ø Verlust/Wette</div></div>
-      </div>
-    </div>`;
-}
-
-function renderCalibration(cal) {
-  if (!cal || !cal.length) return '';
-  const rows = cal.map(c => {
-    const diffCol = Math.abs(c.diff) < 0.05 ? 'var(--green)' : Math.abs(c.diff) < 0.10 ? 'var(--gold)' : 'var(--red)';
-    return `<tr>
-      <td>${c.range}</td><td>${c.bets}</td>
-      <td>${(c.predicted_wr * 100).toFixed(1)}%</td>
-      <td style="font-weight:600">${(c.actual_wr * 100).toFixed(1)}%</td>
-      <td style="color:${diffCol}">${(c.diff * 100).toFixed(1)}%</td>
-    </tr>`;
-  }).join('');
-  return `
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Modell-Kalibrierung · KI-Wahrscheinlichkeit vs Realität</div>
-      <div style="font-size:12px;color:var(--text3);margin-bottom:12px;font-family:var(--mono)">
-        Perfekt kalibriert = Diff nahe 0%. Positiv = Modell unterschätzt, Negativ = Modell überschätzt.
-      </div>
-      <table class="data-table"><thead><tr>
-        <th>KI-Bereich</th><th>Wetten</th><th>Vorhergesagt</th><th>Tatsächlich</th><th>Diff</th>
-      </tr></thead><tbody>${rows}</tbody></table>
-    </div>`;
-}
-
-function renderByRating(ratings) {
-  if (!ratings || !ratings.length) return '';
-  const rows = ratings.map(r => `<tr>
-    <td>${r.label}</td><td>${r.bets}</td><td>${r.won}W / ${r.lost}L</td>
-    <td>${(r.win_rate * 100).toFixed(0)}%</td>
-    <td style="color:${r.profit >= 0 ? 'var(--green)' : 'var(--red)'}">${r.profit >= 0 ? '+' : ''}${r.profit}</td>
-    <td style="color:${r.roi >= 0 ? 'var(--green)' : 'var(--red)'}">${r.roi >= 0 ? '+' : ''}${r.roi}%</td>
-    <td>${r.avg_odds.toFixed(2)}</td>
-    <td>${(r.avg_edge * 100).toFixed(1)}%</td>
-  </tr>`).join('');
-  return `
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Effektivität nach Empfehlungsstufe</div>
-      <table class="data-table"><thead><tr>
-        <th>Rating</th><th>Wetten</th><th>Bilanz</th><th>Win%</th><th>Profit</th><th>ROI</th><th>Ø Quote</th><th>Ø Edge</th>
-      </tr></thead><tbody>${rows}</tbody></table>
-    </div>`;
-}
-
-function renderBySide(sides) {
-  if (!sides) return '';
-  const row = (label, s) => `<tr>
-    <td>${label}</td><td>${s.bets}</td><td>${s.won}W / ${s.lost}L</td>
-    <td>${(s.win_rate * 100).toFixed(0)}%</td>
-    <td style="color:${s.profit >= 0 ? 'var(--green)' : 'var(--red)'}">${s.profit >= 0 ? '+' : ''}${s.profit}</td>
-    <td style="color:${s.roi >= 0 ? 'var(--green)' : 'var(--red)'}">${s.roi >= 0 ? '+' : ''}${s.roi}%</td>
-  </tr>`;
-  return `
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Heim vs Auswärts</div>
-      <table class="data-table"><thead><tr>
-        <th>Seite</th><th>Wetten</th><th>Bilanz</th><th>Win%</th><th>Profit</th><th>ROI</th>
-      </tr></thead><tbody>${row('🏠 Heim', sides.home)}${row('✈️ Auswärts', sides.away)}</tbody></table>
-    </div>`;
-}
-
-function renderByOddsRange(ranges) {
-  return renderRangeTable(ranges, 'Effektivität nach Quotenbereich', 'Quoten');
-}
-function renderByEdgeRange(ranges) {
-  return renderRangeTable(ranges, 'Effektivität nach Edge-Bereich', 'Edge');
-}
-
-function renderRangeTable(ranges, title, rangeLabel) {
-  if (!ranges || !ranges.length) return '';
-  const rows = ranges.map(r => `<tr>
-    <td>${r.range}</td><td>${r.bets}</td><td>${r.won}W / ${r.lost}L</td>
-    <td>${r.bets ? (r.win_rate * 100).toFixed(0) + '%' : '–'}</td>
-    <td style="color:${r.profit >= 0 ? 'var(--green)' : 'var(--red)'}">${r.bets ? (r.profit >= 0 ? '+' : '') + r.profit : '–'}</td>
-    <td style="color:${r.roi >= 0 ? 'var(--green)' : 'var(--red)'}">${r.bets ? (r.roi >= 0 ? '+' : '') + r.roi + '%' : '–'}</td>
-  </tr>`).join('');
-  return `
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-title">${title}</div>
-      <table class="data-table"><thead><tr>
-        <th>${rangeLabel}</th><th>Wetten</th><th>Bilanz</th><th>Win%</th><th>Profit</th><th>ROI</th>
-      </tr></thead><tbody>${rows}</tbody></table>
-    </div>`;
-}
-
-function renderByTeam(teams) {
-  if (!teams || !teams.length) return '';
-  const rows = teams.slice(0, 15).map(t => `<tr>
-    <td class="team-name">${t.team}</td><td>${t.bets}</td><td>${t.won}W / ${t.lost}L</td>
-    <td>${(t.win_rate * 100).toFixed(0)}%</td>
-    <td style="color:${t.profit >= 0 ? 'var(--green)' : 'var(--red)'}">${t.profit >= 0 ? '+' : ''}${t.profit}</td>
-    <td style="color:${t.roi >= 0 ? 'var(--green)' : 'var(--red)'}">${t.roi >= 0 ? '+' : ''}${t.roi}%</td>
-  </tr>`).join('');
-  return `
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Profitabelste Teams</div>
-      <table class="data-table"><thead><tr>
-        <th>Team</th><th>Wetten</th><th>Bilanz</th><th>Win%</th><th>Profit</th><th>ROI</th>
-      </tr></thead><tbody>${rows}</tbody></table>
-    </div>`;
-}
-
-function renderWeekly(weeks) {
-  if (!weeks || !weeks.length) return '';
-  const rows = weeks.map(w => `<tr>
-    <td>${w.week}</td><td>${w.bets}</td><td>${w.won}W / ${w.lost}L</td>
-    <td style="color:${w.profit >= 0 ? 'var(--green)' : 'var(--red)'}">${w.profit >= 0 ? '+' : ''}${w.profit}</td>
-    <td style="color:${w.roi >= 0 ? 'var(--green)' : 'var(--red)'}">${w.roi >= 0 ? '+' : ''}${w.roi}%</td>
-    <td style="font-weight:600;color:${w.cumulative >= 0 ? 'var(--green)' : 'var(--red)'}">${w.cumulative >= 0 ? '+' : ''}${w.cumulative}</td>
-  </tr>`).join('');
-  return `
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Wöchentlicher Verlauf</div>
-      <table class="data-table"><thead><tr>
-        <th>Woche</th><th>Wetten</th><th>Bilanz</th><th>Profit</th><th>ROI</th><th>Kumulativ</th>
-      </tr></thead><tbody>${rows}</tbody></table>
-    </div>`;
-}
-
-function renderKelly(kelly) {
-  if (!kelly || !kelly.entries || !kelly.entries.length) return '';
-  const k = kelly;
-  const kellyColor = k.kelly_total_profit >= 0 ? 'var(--green)' : 'var(--red)';
-  const flatColor = k.flat_total_profit >= 0 ? 'var(--green)' : 'var(--red)';
-  return `
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Kelly-Criterion · Was wäre mit optimalem Einsatz?</div>
-      <div style="font-size:12px;color:var(--text3);margin-bottom:12px;font-family:var(--mono)">
-        Start-Bankroll: ${k.start_bankroll} · Kelly passt den Einsatz an die Edge an.
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
-        <div class="stat-badge">
-          <div class="stat-val" style="font-size:22px;color:${kellyColor}">${k.kelly_total_profit >= 0 ? '+' : ''}${k.kelly_total_profit}</div>
-          <div class="stat-lbl">Kelly Profit</div>
-        </div>
-        <div class="stat-badge">
-          <div class="stat-val" style="font-size:22px;color:${flatColor}">${k.flat_total_profit >= 0 ? '+' : ''}${k.flat_total_profit}</div>
-          <div class="stat-lbl">Flat-Stake Profit</div>
-        </div>
-        <div class="stat-badge">
-          <div class="stat-val" style="font-size:22px">${k.end_bankroll}</div>
-          <div class="stat-lbl">Kelly Bankroll</div>
-        </div>
-      </div>
-    </div>`;
-}
-
-// ══════════════════════════════════════════════════════
 //  TEAM DATALIST
 // ══════════════════════════════════════════════════════
 function updateTeamList() {
@@ -1015,281 +713,3 @@ function updateTeamList() {
   loadScores();
   setInterval(updateRefreshStatus, 30000);
 })();
-
-// ── Periode abschließen ──────────────────────────────
-
-async function closePeriod() {
-  const label = prompt('Perioden-Label (optional, z.B. "v3-endstand"):');
-  if (label === null) return; // Abbruch
-  const notes = prompt('Notizen (optional):') || '';
-
-  try {
-    const res = await fetch(API + '/api/bets/close-period', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label: label || undefined, notes }),
-    });
-    const data = await res.json();
-    if (data.success) {
-      alert(
-        `Periode #${data.period_id} abgeschlossen!\n` +
-        `Label: ${data.label}\n` +
-        `Wetten: ${data.bets_closed}\n` +
-        `Win-Rate: ${(data.win_rate * 100).toFixed(1)}%\n` +
-        `Profit: ${data.profit >= 0 ? '+' : ''}${data.profit.toFixed(2)}\n` +
-        `ROI: ${data.roi.toFixed(1)}%`
-      );
-      loadVersionComparison();
-    } else {
-      alert('Fehler: ' + (data.error || 'Unbekannt'));
-    }
-  } catch (e) {
-    alert('Fehler: ' + e.message);
-  }
-}
-
-// ── Versionen laden ──────────────────────────────────
-
-async function loadVersionComparison() {
-  const el = document.getElementById('bets-tab-versions');
-  if (!el) return;
-  el.innerHTML = loadingHtml('Lade Versionen...');
-
-  try {
-    const [versions, periods, verRes] = await Promise.all([
-      apiFetch('/api/bets/versions'),
-      apiFetch('/api/bets/periods'),
-      apiFetch('/api/model/version'),
-    ]);
-
-    const currentVersion = verRes.version || 'unknown';
-
-    if (!versions.length && !periods.length) {
-      el.innerHTML = `
-        <div class="empty-msg">
-          <div class="empty-icon">📊</div>
-          <div class="empty-text">Noch keine Wetten zum Vergleichen</div>
-          <div style="font-size:12px;color:var(--text3);margin-top:8px">
-            Aktive Version: <code>${currentVersion}</code>
-          </div>
-        </div>`;
-      return;
-    }
-
-    el.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-        <div>
-          <span style="font-size:12px;color:var(--text3);font-family:var(--mono)">
-            Aktive Version: <strong>${currentVersion}</strong>
-          </span>
-        </div>
-        <button onclick="closePeriod()">Periode abschließen</button>
-      </div>
-
-      ${versions.length ? renderVersionsTable(versions) : ''}
-      ${periods.length ? renderPeriodsTable(periods) : ''}
-      ${versions.length >= 2 ? renderCompareSelector(versions) : ''}
-      <div id="version-compare-result"></div>
-    `;
-  } catch (e) {
-    el.innerHTML = errorHtml(e.message);
-  }
-}
-
-
-// ── Versionen-Tabelle ────────────────────────────────
-
-function renderVersionsTable(versions) {
-  const rows = versions.map(v => {
-    const profitColor = v.profit >= 0 ? 'var(--green)' : 'var(--red)';
-    const roiColor = v.roi >= 0 ? 'var(--green)' : 'var(--red)';
-    return `
-      <tr>
-        <td style="font-family:var(--mono);font-size:12px;font-weight:700">${v.version}</td>
-        <td>${v.bets}</td>
-        <td>${v.won}W / ${v.lost}L</td>
-        <td>${(v.win_rate * 100).toFixed(1)}%</td>
-        <td style="color:${profitColor};font-weight:700">${v.profit >= 0 ? '+' : ''}${v.profit.toFixed(2)}</td>
-        <td style="color:${roiColor}">${v.roi >= 0 ? '+' : ''}${v.roi.toFixed(1)}%</td>
-        <td>${v.brier.toFixed(4)}</td>
-        <td style="font-size:11px;color:var(--text3)">${v.first_bet} – ${v.last_bet}</td>
-      </tr>`;
-  }).join('');
-
-  return `
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Modellversionen</div>
-      <div style="overflow-x:auto">
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead>
-            <tr style="border-bottom:1px solid var(--border);text-align:left">
-              <th style="padding:8px 6px">Version</th>
-              <th style="padding:8px 6px">Wetten</th>
-              <th style="padding:8px 6px">Bilanz</th>
-              <th style="padding:8px 6px">Win%</th>
-              <th style="padding:8px 6px">Profit</th>
-              <th style="padding:8px 6px">ROI</th>
-              <th style="padding:8px 6px">Brier</th>
-              <th style="padding:8px 6px">Zeitraum</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    </div>`;
-}
-
-
-// ── Perioden-Tabelle ─────────────────────────────────
-
-function renderPeriodsTable(periods) {
-  const rows = periods.map(p => {
-    const profitColor = p.profit >= 0 ? 'var(--green)' : 'var(--red)';
-    return `
-      <tr>
-        <td style="font-weight:700">#${p.period_id}</td>
-        <td style="font-family:var(--mono);font-size:11px">${p.label}</td>
-        <td style="font-family:var(--mono);font-size:11px">${p.model_version}</td>
-        <td>${p.bets}</td>
-        <td>${(p.win_rate * 100).toFixed(1)}%</td>
-        <td style="color:${profitColor};font-weight:700">${p.profit >= 0 ? '+' : ''}${p.profit.toFixed(2)}</td>
-        <td>${p.roi >= 0 ? '+' : ''}${p.roi.toFixed(1)}%</td>
-        <td style="font-size:11px;color:var(--text3)">${p.closed_at?.slice(0, 10) || '–'}</td>
-        <td style="font-size:11px;color:var(--text3)">${p.notes || '–'}</td>
-      </tr>`;
-  }).join('');
-
-  return `
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Abgeschlossene Perioden</div>
-      <div style="overflow-x:auto">
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead>
-            <tr style="border-bottom:1px solid var(--border);text-align:left">
-              <th style="padding:8px 6px">ID</th>
-              <th style="padding:8px 6px">Label</th>
-              <th style="padding:8px 6px">Version</th>
-              <th style="padding:8px 6px">Wetten</th>
-              <th style="padding:8px 6px">Win%</th>
-              <th style="padding:8px 6px">Profit</th>
-              <th style="padding:8px 6px">ROI</th>
-              <th style="padding:8px 6px">Geschlossen</th>
-              <th style="padding:8px 6px">Notizen</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    </div>`;
-}
-
-
-// ── Vergleichs-Selector ──────────────────────────────
-
-function renderCompareSelector(versions) {
-  const opts = versions.map(v =>
-    `<option value="${v.version}">${v.version} (${v.bets} Wetten)</option>`
-  ).join('');
-
-  return `
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Direktvergleich</div>
-      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
-        <div style="flex:1;min-width:160px">
-          <label style="font-size:12px;color:var(--text3)">Version A</label>
-          <select id="compare-v1" style="width:100%">${opts}</select>
-        </div>
-        <div style="font-size:18px;color:var(--text3);padding-bottom:6px">vs</div>
-        <div style="flex:1;min-width:160px">
-          <label style="font-size:12px;color:var(--text3)">Version B</label>
-          <select id="compare-v2" style="width:100%">${opts}</select>
-        </div>
-        <button onclick="runVersionCompare()">Vergleichen</button>
-      </div>
-    </div>`;
-}
-
-
-// ── Vergleich ausführen ──────────────────────────────
-
-async function runVersionCompare() {
-  const v1 = document.getElementById('compare-v1')?.value;
-  const v2 = document.getElementById('compare-v2')?.value;
-  const el = document.getElementById('version-compare-result');
-  if (!v1 || !v2 || !el) return;
-  if (v1 === v2) { alert('Bitte zwei verschiedene Versionen wählen.'); return; }
-
-  el.innerHTML = loadingHtml('Vergleiche...');
-  try {
-    const data = await apiFetch(`/api/bets/version-compare?v1=${encodeURIComponent(v1)}&v2=${encodeURIComponent(v2)}`);
-    el.innerHTML = renderVersionCompare(data);
-  } catch (e) {
-    el.innerHTML = errorHtml(e.message);
-  }
-}
-
-
-function renderVersionCompare(data) {
-  const { v1, v2, deltas, better } = data;
-
-  function deltaCell(key, suffix = '', invert = false) {
-    const d = deltas[key] || 0;
-    const positive = invert ? d < 0 : d > 0;
-    const color = d === 0 ? 'var(--text3)' : positive ? 'var(--green)' : 'var(--red)';
-    const sign = d > 0 ? '+' : '';
-    return `<span style="color:${color};font-weight:700">${sign}${typeof d === 'number' ? d.toFixed(4) : d}${suffix}</span>`;
-  }
-
-  function row(label, k1, k2, key, fmt, suffix = '', invert = false) {
-    return `
-      <tr>
-        <td style="font-weight:500;padding:6px 8px">${label}</td>
-        <td style="padding:6px 8px;font-family:var(--mono)">${fmt(k1)}</td>
-        <td style="padding:6px 8px;font-family:var(--mono)">${fmt(k2)}</td>
-        <td style="padding:6px 8px;text-align:center">${deltaCell(key, suffix, invert)}</td>
-      </tr>`;
-  }
-
-  const pct = v => (v * 100).toFixed(1) + '%';
-  const num = v => typeof v === 'number' ? v.toFixed(2) : v;
-  const num4 = v => typeof v === 'number' ? v.toFixed(4) : v;
-
-  const betterLabel = better === v1.version ? v1.version : v2.version;
-
-  return `
-    <div class="card">
-      <div class="card-title">${v1.version} vs ${v2.version}</div>
-      <div style="overflow-x:auto">
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead>
-            <tr style="border-bottom:1px solid var(--border);text-align:left">
-              <th style="padding:8px">Metrik</th>
-              <th style="padding:8px">${v1.version}</th>
-              <th style="padding:8px">${v2.version}</th>
-              <th style="padding:8px;text-align:center">Delta</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td style="padding:6px 8px">Wetten</td>
-              <td style="padding:6px 8px">${v1.bets}</td>
-              <td style="padding:6px 8px">${v2.bets}</td>
-              <td></td>
-            </tr>
-            ${row('Win-Rate', v1.win_rate, v2.win_rate, 'win_rate', pct)}
-            ${row('Profit', v1.profit, v2.profit, 'profit', num)}
-            ${row('ROI', v1.roi, v2.roi, 'roi', num, '%')}
-            ${row('Brier Score', v1.brier, v2.brier, 'brier', num4, '', true)}
-            ${row('Avg Edge', v1.avg_edge, v2.avg_edge, 'avg_edge', num4)}
-          </tbody>
-        </table>
-      </div>
-      <div style="margin-top:12px;padding:10px 14px;background:var(--bg2);border-radius:8px;display:flex;align-items:center;gap:10px">
-        <span style="font-size:18px">🏆</span>
-        <div>
-          <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px">Profitabler</div>
-          <div style="font-weight:700;font-family:var(--mono)">${betterLabel}</div>
-        </div>
-      </div>
-    </div>`;
-}

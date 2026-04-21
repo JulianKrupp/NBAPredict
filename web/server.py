@@ -3,8 +3,6 @@ NBA Tracker – Flask Web-Server
 
 Starten mit:  python web/server.py
 Aufruf im Browser: http://localhost:5000
-
-Exponiert alle CLI-Funktionen als REST-API und liefert das Frontend aus.
 """
 
 from __future__ import annotations
@@ -14,7 +12,6 @@ import logging
 import os
 import sys
 import threading
-from dataclasses import asdict
 from datetime import date
 from functools import wraps
 from pathlib import Path
@@ -30,7 +27,6 @@ from src.api.odds_api_client import OddsApiClient
 from src.ml.comparison import OddsVsMLComparison
 from src.ml.ml_predictor import MLPredictor
 from src.ml.model_trainer import NBAModelTrainer
-from src.prediction.predictor import GamePredictor
 from src.utils.config import Config
 from src.utils.logger import setup_logger
 from src.betting.tracker import BettingTracker
@@ -38,13 +34,13 @@ from src.betting.resolver import BetResolver
 
 
 # ── App-Setup ─────────────────────────────────────────────────────────────────
-# Absoluter Pfad zu web/static/ – funktioniert sowohl lokal als auch in Docker,
-# unabhängig davon aus welchem Verzeichnis der Server gestartet wird.
 STATIC_DIR = Path(__file__).parent / "static"
 app = Flask(__name__, static_folder=str(STATIC_DIR))
 CORS(app)
 
 config = Config()
+for warning in config.validate():
+    print(f"[WARNUNG] {warning}")
 setup_logger(config.log_level, config.log_file)
 logger = logging.getLogger(__name__)
 
@@ -154,7 +150,6 @@ def predict():
     data = request.get_json() or {}
     home_name = data.get("home", "")
     away_name = data.get("away", "")
-    use_ml    = data.get("ml", True)
 
     if not home_name or not away_name:
         return jsonify({"error": "home und away sind erforderlich"}), 400
@@ -166,48 +161,27 @@ def predict():
     if not away_stats:
         return jsonify({"error": f"Team '{away_name}' nicht gefunden"}), 404
 
-    odds = odds_client.get_odds(home_name, away_name)
+    if not ml_predictor.is_model_available():
+        return jsonify({"error": "Kein ML-Modell vorhanden. Erst 'train all' ausführen."}), 503
 
-    if use_ml and ml_predictor.is_model_available():
-        result = ml_predictor.predict(home_stats, away_stats, odds)
-        return jsonify({
-            "type":             "ml",
-            "home":             home_stats.name,
-            "away":             away_stats.name,
-            "ml_home_prob":     round(result.ml_home_win_probability, 3),
-            "ml_away_prob":     round(1 - result.ml_home_win_probability, 3),
-            "ml_winner":        result.ml_predicted_winner,
-            "ml_confidence":    result.ml_confidence,
-            "rule_home_prob":   round(result.rule_home_win_probability, 3),
-            "rule_away_prob":   round(1 - result.rule_home_win_probability, 3),
-            "rule_winner":      result.rule_predicted_winner,
-            "odds_home_prob":   round(result.odds_home_win_probability, 3) if result.odds_home_win_probability else None,
-            "odds_away_prob":   round(1 - result.odds_home_win_probability, 3) if result.odds_home_win_probability else None,
-            "odds_home_raw":    odds.odds_home if odds else None,
-            "odds_away_raw":    odds.odds_away if odds else None,
-            "home_score":       result.predicted_home_score,
-            "away_score":       result.predicted_away_score,
-            "consensus":        result.consensus_winner,
-            "agreement":        result.consensus_agreement_count,
-            "factors":          result.feature_contributions,
-        })
-    else:
-        predictor = GamePredictor()
-        result = predictor.predict(home_stats, away_stats, odds)
-        home_prob = result.win_probability if result.predicted_winner == "home" else 1 - result.win_probability
-        return jsonify({
-            "type":           "rule",
-            "home":           home_stats.name,
-            "away":           away_stats.name,
-            "rule_home_prob": round(home_prob, 3),
-            "rule_away_prob": round(1 - home_prob, 3),
-            "rule_winner":    result.predicted_winner,
-            "ml_home_prob":   None,
-            "odds_home_prob": odds.implied_home_probability / (odds.implied_home_probability + odds.implied_away_probability) if odds else None,
-            "home_score":     result.predicted_home_score,
-            "away_score":     result.predicted_away_score,
-            "factors":        result.factors,
-        })
+    odds = odds_client.get_odds(home_name, away_name)
+    result = ml_predictor.predict(home_stats, away_stats, odds)
+    return jsonify({
+        "type":           "ml",
+        "home":           home_stats.name,
+        "away":           away_stats.name,
+        "ml_home_prob":   round(result.ml_home_win_probability, 3),
+        "ml_away_prob":   round(1 - result.ml_home_win_probability, 3),
+        "ml_winner":      result.ml_predicted_winner,
+        "ml_confidence":  result.ml_confidence,
+        "odds_home_prob": round(result.odds_home_win_probability, 3) if result.odds_home_win_probability else None,
+        "odds_away_prob": round(1 - result.odds_home_win_probability, 3) if result.odds_home_win_probability else None,
+        "odds_home_raw":  odds.odds_home if odds else None,
+        "odds_away_raw":  odds.odds_away if odds else None,
+        "home_score":     result.predicted_home_score,
+        "away_score":     result.predicted_away_score,
+        "factors":        result.feature_contributions,
+    })
 
 
 # ── API: Vergleich KI vs. Odds ────────────────────────────────────────────────
@@ -224,33 +198,21 @@ def compare():
         entries = comparison.run_comparison()
 
     return jsonify([{
-        "home": e.home_team,
-        "away": e.away_team,
-        "ml_home": round(e.ml_home_prob, 3),
-        "ml_away": round(e.ml_away_prob, 3),
-        "ml_winner": e.ml_winner,
-        "rule_home": round(e.rule_home_prob, 3),
-        "rule_away": round(e.rule_away_prob, 3),
-        "rule_winner": e.rule_winner,
-        "odds_home": round(e.odds_home_prob, 3),
-        "odds_away": round(e.odds_away_prob, 3),
-        "odds_winner": e.odds_winner,
+        "home":          e.home_team,
+        "away":          e.away_team,
+        "ml_home":       round(e.ml_home_prob, 3),
+        "ml_away":       round(e.ml_away_prob, 3),
+        "ml_winner":     e.ml_winner,
+        "odds_home":     round(e.odds_home_prob, 3),
+        "odds_away":     round(e.odds_away_prob, 3),
+        "odds_winner":   e.odds_winner,
         "odds_home_raw": e.odds_home_raw,
         "odds_away_raw": e.odds_away_raw,
-        "diff": round(e.prob_difference, 3),
-        "agree": e.methods_agree,
-        "indicator": e.value_bet_indicator,
-        # ── Wettempfehlung ──
-        "bet_team": e.bet_team,
-        "bet_side": e.bet_side,
-        "bet_rating": e.bet_rating,
-        "bet_rating_label": e.bet_rating_label,
-        "bet_ev": round(e.best_ev, 4),
-        "bet_edge": round(e.edge, 4),
-        "bet_confidence": e.bet_confidence,
-        "bet_odds_raw": round(e.bet_odds_raw, 2),
-        "bet_ml_prob": round(e.bet_ml_prob, 3),
-        "bet_odds_prob": round(e.bet_odds_prob, 3),
+        "diff":          round(e.prob_difference, 3),
+        "ev_home":       round(e.ev_home, 4),
+        "ev_away":       round(e.ev_away, 4),
+        "edge_home":     round(e.edge_home, 4),
+        "edge_away":     round(e.edge_away, 4),
     } for e in entries])
 
 
@@ -274,7 +236,6 @@ def train():
         return jsonify({"error": "Training läuft bereits"}), 409
 
     data    = request.get_json() or {}
-    command = data.get("command", "all")
     seasons = data.get("seasons", [2023, 2024])
     max_g   = data.get("max_games", 300)
 
@@ -313,6 +274,8 @@ def train_status():
     return jsonify(_training_status)
 
 
+# ── API: Wetten ───────────────────────────────────────────────────────────────
+
 @app.route("/api/bets", methods=["GET"])
 @handle_errors
 def get_bets():
@@ -330,7 +293,7 @@ def get_bets():
         "home_score": b.home_score, "away_score": b.away_score,
         "payout": round(b.payout, 2), "profit": round(b.profit, 2),
         "placed_at": b.placed_at, "resolved_at": b.resolved_at,
-        "model_version": b.model_version, "period_id": b.period_id,
+        "model_version": b.model_version,
     } for b in bets])
 
 
@@ -341,7 +304,7 @@ def place_bet():
     if not data:
         return jsonify({"error": "JSON-Body fehlt"}), 400
     required = ["home_team", "away_team", "bet_on", "bet_side", "odds",
-                 "ml_prob", "odds_prob", "edge", "ev", "bet_rating"]
+                "ml_prob", "odds_prob", "edge", "ev"]
     missing = [f for f in required if f not in data]
     if missing:
         return jsonify({"error": f"Felder fehlen: {', '.join(missing)}"}), 400
@@ -350,7 +313,7 @@ def place_bet():
         bet_on=data["bet_on"], bet_side=data["bet_side"],
         odds=float(data["odds"]), ml_prob=float(data["ml_prob"]),
         odds_prob=float(data["odds_prob"]), edge=float(data["edge"]),
-        ev=float(data["ev"]), bet_rating=data["bet_rating"],
+        ev=float(data["ev"]), bet_rating=data.get("bet_rating", "none"),
         stake=float(data.get("stake", 10.0)),
         model_version=data.get("model_version"),
     )
@@ -382,71 +345,6 @@ def resolve_bets():
 @app.route("/api/bets/reset", methods=["POST"])
 def reset_bets():
     return jsonify({"success": True, "deleted": bet_tracker.reset()})
-
-
-@app.route("/api/bets/analytics")
-@handle_errors
-def bet_analytics():
-    """Umfassende Effektivitäts-Analyse aller Wetten."""
-    return jsonify(bet_tracker.get_analytics())
-
-
-@app.route("/api/bets/close-period", methods=["POST"])
-@handle_errors
-def close_period():
-    """
-    Schließt die aktuelle Wettperiode ab.
-
-    Alle aufgelösten Wetten ohne Periode werden der neuen Periode zugeordnet.
-    Body (optional): { "label": "v3-endstand", "notes": "Vor Data-Leakage-Fix" }
-    """
-    data = request.get_json() or {}
-    result = bet_tracker.close_period(label=data.get("label"), notes=data.get("notes", ""))
-    return jsonify({"success": True, **result})
-
-
-# ── API: Perioden auflisten ───────────────────────────────────────────────────
-
-@app.route("/api/bets/periods")
-@handle_errors
-def get_periods():
-    """Gibt alle abgeschlossenen Perioden mit Zusammenfassung zurück."""
-    return jsonify(bet_tracker.get_periods())
-
-
-# ── API: Modellversionen auflisten ────────────────────────────────────────────
-
-@app.route("/api/bets/versions")
-@handle_errors
-def get_versions():
-    """Listet alle Modellversionen mit Wett-Statistiken auf."""
-    return jsonify(bet_tracker.get_versions())
-
-
-# ── API: Zwei Versionen vergleichen ───────────────────────────────────────────
-
-@app.route("/api/bets/version-compare")
-@handle_errors
-def version_compare():
-    """
-    Vergleicht zwei Modellversionen.
-    Query-Parameter: ?v1=LogReg_f46_a70&v2=LogReg_f45_a65
-    """
-    v1 = request.args.get("v1")
-    v2 = request.args.get("v2")
-    if not v1 or not v2:
-        return jsonify({"error": "Parameter v1 und v2 erforderlich"}), 400
-    return jsonify(bet_tracker.get_version_comparison(v1, v2))
-
-
-# ── API: Aktuelle Modellversion ───────────────────────────────────────────────
-
-@app.route("/api/model/version")
-def get_model_version():
-    """Gibt die aktuelle Modellversion zurück."""
-    from src.betting.tracker import _current_model_version
-    return jsonify({"version": _current_model_version()})
-
 
 
 # ── Start ─────────────────────────────────────────────────────────────────────
