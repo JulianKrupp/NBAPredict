@@ -20,27 +20,19 @@ def display_ml_prediction(result: MLPredictionResult) -> None:
     home = result.home_team
     away = result.away_team
     ml_winner_name = home if result.ml_predicted_winner == "home" else away
-    rule_winner_name = home if result.rule_predicted_winner == "home" else away
     consensus_name = home if result.consensus_winner == "home" else away
 
     print(f"\n{'='*65}")
     print(f"  🔮 KI-Vorhersage: {home} vs {away}")
     print(f"{'='*65}")
 
-    # KI-Vorhersage
-    print(f"\n  🤖 ML-Modell (Random Forest / Gradient Boosting)")
+    # ML-Vorhersage
+    print(f"\n  🤖 ML-Modell (Logistische Regression)")
     print(f"  {'─'*60}")
     _print_probability_bar("  Heim", home, result.ml_home_win_probability)
     _print_probability_bar("  Ausw", away, 1.0 - result.ml_home_win_probability)
     print(f"  Vorhergesagter Sieger : {ml_winner_name}")
     print(f"  Konfidenz             : {result.ml_confidence}")
-
-    # Regelbasierte Vorhersage
-    print(f"\n  📐 Regelbasiertes Modell (Gewichtetes Scoring)")
-    print(f"  {'─'*60}")
-    _print_probability_bar("  Heim", home, result.rule_home_win_probability)
-    _print_probability_bar("  Ausw", away, 1.0 - result.rule_home_win_probability)
-    print(f"  Vorhergesagter Sieger : {rule_winner_name}")
 
     # Wettquoten
     if result.odds_home_win_probability is not None:
@@ -56,7 +48,7 @@ def display_ml_prediction(result: MLPredictionResult) -> None:
     # Konsens
     agree_icon = "✅" if result.all_agree else "⚠️ "
     print(f"\n  {'─'*60}")
-    print(f"  {agree_icon} Konsens ({result.consensus_agreement_count}/3 Methoden): "
+    print(f"  {agree_icon} Konsens ({result.consensus_agreement_count}/2 Methoden): "
           f"{consensus_name}")
 
     # Score-Schätzung

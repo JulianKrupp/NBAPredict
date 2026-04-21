@@ -1,3 +1,1 @@
-from .predictor import GamePredictor, PredictionResult
-
-__all__ = ["GamePredictor", "PredictionResult"]
+# Prediction module – Regelmodell entfernt (v1.3.0)

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.models.game import Game
     from src.models.team import Team
-    from src.prediction.predictor import PredictionResult
+    from src.ml.ml_predictor import MLPredictionResult
 
 
 def display_games(games: list["Game"], title: str = "Spiele") -> None:
@@ -35,39 +35,6 @@ def display_games(games: list["Game"], title: str = "Spiele") -> None:
 
     print()
 
-
-def display_prediction(
-    prediction: "PredictionResult",
-    home_team: str,
-    away_team: str,
-) -> None:
-    """
-    Gibt das Ergebnis einer Vorhersage formatiert aus.
-
-    Args:
-        prediction: PredictionResult-Objekt mit Vorhersagedaten.
-        home_team:  Name des Heimteams.
-        away_team:  Name des Auswärtsteams.
-    """
-    winner_label = home_team if prediction.predicted_winner == "home" else away_team
-    loser_label  = away_team if prediction.predicted_winner == "home" else home_team
-
-    print(f"\n{'='*60}")
-    print(f"  🔮 Vorhersage: {home_team} vs {away_team}")
-    print(f"{'='*60}")
-    print(f"  Vorhergesagter Sieger : {winner_label}")
-    print(f"  Siegwahrscheinlichkeit: {prediction.win_probability:.1%}")
-    print(f"  Vorhergesagtes Ergebnis: {prediction.predicted_home_score:.0f} – {prediction.predicted_away_score:.0f}")
-    print()
-    print("  Einflussfaktoren:")
-    for factor, value in prediction.factors.items():
-        bar = _progress_bar(value)
-        print(f"    {factor:<25} {bar}  {value:.2f}")
-
-    if prediction.odds_home is not None:
-        print()
-        print(f"  Wettquoten  → Heim: {prediction.odds_home:.2f}  |  Auswärts: {prediction.odds_away:.2f}")
-    print(f"{'='*60}\n")
 
 
 def display_standings(standings: list["Team"]) -> None:
