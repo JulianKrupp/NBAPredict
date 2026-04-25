@@ -1,18 +1,19 @@
 """
 Trainingsdaten-Kollektor für das NBA ML-Modell (v4).
 
-Kombiniert Daten aus drei Quellen:
-  1. BallDontLie API  – historische Spielergebnisse & Team-Standings
-  2. nba_api          – erweiterte Team-Statistiken (Advanced Stats)
-  3. The Odds API     – historische Wettquoten als zusätzliches Feature
+Kombiniert Daten aus zwei Quellen:
+  1. BallDontLie API – historische Spielergebnisse
+  2. Kumulativer Tracker – alle Stats werden chronologisch aus den Spielergebnissen
+     berechnet (kein externer Stats-Abruf mehr → kein Data Leakage)
 
 Änderungen v4 (gegenüber v3):
-  - FIX Data Leakage: Neuer _CumulativeTeamTracker + build_samples_cumulative()
-    → Stats werden jetzt chronologisch bis zum Spieltag berechnet,
-      nicht mehr aus dem Saison-Endstand.
+  - FIX Data Leakage: _CumulativeTeamTracker + build_samples_cumulative()
+    → Stats werden chronologisch bis zum Spieltag berechnet, nicht mehr aus
+      dem Saison-Endstand (stats.nba.com-Abruf vollständig entfernt).
+  - FIX Advanced Stats: compute_advanced_stats() schätzt OffRtg/DefRtg/NetRtg/
+      Pace/TS% aus kumulativen Grunddaten – verhindert Zukunfts-Leakage.
   - FIX Odds-Feature: odds_implied_home_prob aus Features entfernt (war immer 0.5)
     → Feature-Anzahl: 46 → 45
-  - Neuer collect()-Ablauf: kein Saison-Endstand mehr nötig (Schritte 2+3 entfallen)
   - MIN_GAMES_THRESHOLD: Spiele werden erst ab 10 gespielten Spielen pro Team genutzt
 """
 
@@ -29,8 +30,7 @@ from pathlib import Path
 from typing import Iterator
 
 from src.api.nba_api_client import NBAApiClient
-from src.api.nba_stats_client import NBAStatsApiClient, AdvancedTeamStats
-from src.api.odds_api_client import OddsApiClient
+from src.api.nba_stats_client import AdvancedTeamStats
 from src.api.base_client import ApiError
 from src.ml.elo import calculate_elo_per_game
 from src.models.game import Game
@@ -45,6 +45,24 @@ METADATA_PATH = Path("data/training/metadata.json")
 # v4: Mindestanzahl Spiele pro Team, bevor Samples erstellt werden.
 # Frühe Saisonspiele haben zu wenig Daten für stabile Features.
 MIN_GAMES_THRESHOLD = 10
+
+# Standard-Trainingsumfang: 5 Saisons × ~1230 Spiele ≈ 6150 verfügbar → 5000 als Limit
+DEFAULT_MAX_GAMES = 5000
+DEFAULT_SEASONS_COUNT = 4   # Anzahl der letzten Saisons (älteste wird bei Bedarf gekürzt)
+
+
+def default_training_seasons(n: int = DEFAULT_SEASONS_COUNT) -> list[int]:
+    """
+    Gibt die letzten n NBA-Saisons dynamisch zurück.
+
+    Die NBA-Saison X umfasst Spiele von Oktober des Jahres X bis ~Juni X+1.
+    Beispiele (n=4):
+      April 2026  → [2022, 2023, 2024, 2025]   (Saison 2025 = 2025/26 läuft)
+      Nov.  2026  → [2023, 2024, 2025, 2026]   (Saison 2026 = 2026/27 gerade begonnen)
+    """
+    today = date.today()
+    current_season = today.year - 1 if today.month < 10 else today.year
+    return list(range(current_season - n + 1, current_season + 1))
 
 
 
@@ -286,6 +304,38 @@ class _CumulativeTeamTracker:
         except (ValueError, IndexError):
             return 2
 
+    # ── Approximierte Advanced Stats (leak-frei) ──────────────────────
+
+    def compute_advanced_stats(self) -> AdvancedTeamStats:
+        """
+        Schätzt Advanced Stats ausschließlich aus kumulativen Grunddaten.
+
+        Verhindert Data Leakage, weil keine vollständigen Saison-Endstände
+        von stats.nba.com benötigt werden.
+
+        Approximationen (kalibriert auf NBA-Ligadurchschnitte):
+          offensive_rating  ≈ avg_pts_scored        (NBA-Ø ~113 Pkt/Spiel)
+          defensive_rating  ≈ avg_pts_allowed
+          net_rating        = offensive_rating − defensive_rating
+          pace              = 99.0                   (Liga-Ø, kein Bias möglich)
+          true_shooting_pct ≈ linear aus avg_pts_scored skaliert
+                              (NBA-Ø ≈ 0.565 bei ~114 Pkt/Spiel)
+        """
+        off_rtg = self.avg_pts_scored
+        def_rtg = self.avg_pts_allowed
+        net_rtg = off_rtg - def_rtg
+        ts_pct = 0.565 + (self.avg_pts_scored - 114.0) * 0.003
+        ts_pct = max(0.45, min(0.65, ts_pct))
+        return AdvancedTeamStats(
+            team_id=0,
+            team_name=self.name,
+            offensive_rating=round(off_rtg, 2),
+            defensive_rating=round(def_rtg, 2),
+            net_rating=round(net_rtg, 2),
+            pace=99.0,
+            true_shooting_pct=round(ts_pct, 4),
+        )
+
     # ── Update: Nach dem Spiel aufrufen ──────────────────────────────
 
     def update(
@@ -322,23 +372,8 @@ class _CumulativeTeamTracker:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def _lookup_advanced_stats(name: str, stats: dict) -> "AdvancedTeamStats":
-    """Sucht Advanced Stats für ein Team — exakter Match, dann Substring."""
-    if name in stats:
-        return stats[name]
-    name_lower = name.lower()
-    for key, val in stats.items():
-        if name_lower in key.lower() or key.lower() in name_lower:
-            return val
-    raise RuntimeError(
-        f"Advanced Stats für Team '{name}' nicht gefunden.\n"
-        f"Verfügbare Teams: {sorted(stats.keys())}"
-    )
-
-
 def build_samples_cumulative(
     games: list[Game],
-    advanced_stats: dict[int, dict],
     elo_per_game: dict[int, tuple[float, float]] | None = None,
     min_games: int = MIN_GAMES_THRESHOLD,
 ) -> list[dict]:
@@ -348,6 +383,9 @@ def build_samples_cumulative(
     Für jedes Spiel werden die Team-Statistiken NUR aus vorherigen Spielen
     der Saison berechnet. Das Ergebnis des aktuellen Spiels fließt erst
     NACH der Feature-Erstellung in die Statistiken ein.
+
+    Advanced Stats (OffRtg, DefRtg, NetRtg, Pace, TS%) werden aus kumulativen
+    Grunddaten approximiert – kein Abruf vollständiger Saison-Endstände mehr.
 
     Args:
         games:        Alle historischen Spiele (werden intern sortiert).
@@ -384,9 +422,10 @@ def build_samples_cumulative(
             continue
 
         # ── Features aus kumulativen Stats VOR dem Spiel ──────────────
-        season_adv = advanced_stats[season]
-        h_adv = _lookup_advanced_stats(h_name, season_adv)
-        a_adv = _lookup_advanced_stats(a_name, season_adv)
+        # Advanced Stats werden aus kumulativen Grunddaten approximiert
+        # (kein Saison-Endstand von stats.nba.com → kein Data Leakage)
+        h_adv = ht.compute_advanced_stats()
+        a_adv = at.compute_advanced_stats()
         h_rest = ht.days_rest_before(game.date)
         a_rest = at.days_rest_before(game.date)
         h_g7 = ht.games_last_7_days_before(game.date)
@@ -490,8 +529,6 @@ class TrainingDataCollector:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.nba_client = NBAApiClient(config)
-        self.stats_client = NBAStatsApiClient(config)
-        self.odds_client = OddsApiClient(config)
         self.logger = logging.getLogger(__name__)
 
     # ── Öffentliche Methoden ──────────────────────────────────────────────
@@ -499,19 +536,21 @@ class TrainingDataCollector:
     def collect(
         self,
         seasons: list[int] | None = None,
-        max_games: int = 5000,
+        max_games: int = DEFAULT_MAX_GAMES,
         output_path: Path = TRAINING_DATA_PATH,
     ) -> int:
         """
         Sammelt Trainingsdaten und speichert sie als CSV.
 
         v4: Nutzt kumulative Stats statt Saison-Endstand.
+        Saisons werden dynamisch aus den letzten DEFAULT_SEASONS_COUNT Spieljahren
+        ermittelt, sofern nicht explizit übergeben.
         """
         if seasons is None:
-            seasons = [2021, 2022, 2023, 2024]
+            seasons = default_training_seasons()
 
         print(f"\n{'='*60}")
-        print(f"  Trainingsdaten sammeln (v4 – kumulative Stats)")
+        print(f"  Trainingsdaten sammeln (v4 – kumulative Stats, leak-frei)")
         print(f"  Saisons: {seasons} | Max. Spiele: {max_games}")
         print(f"{'='*60}")
 
@@ -523,28 +562,14 @@ class TrainingDataCollector:
             return 0
         print(f"        → {len(all_games)} Spiele geladen")
 
-        # Schritt 2: Echte Advanced Stats pro Saison laden
-        print("\n  [2/4] Lade Advanced Stats (stats.nba.com)...")
-        advanced_stats: dict[int, dict] = {}
-        for season in seasons:
-            stats = self.stats_client.get_all_team_advanced_stats(season)
-            if not stats:
-                raise RuntimeError(
-                    f"Echte Advanced Stats für Saison {season} nicht verfügbar.\n"
-                    "Stelle sicher dass nba_api installiert ist: pip install nba_api\n"
-                    "und stats.nba.com erreichbar ist."
-                )
-            advanced_stats[season] = stats
-            print(f"        → Saison {season}: {len(stats)} Teams")
-
-        # Schritt 3: Elo-Ratings berechnen
-        print("\n  [3/4] Berechne Elo-Ratings...")
+        # Schritt 2: Elo-Ratings berechnen
+        print("\n  [2/3] Berechne Elo-Ratings...")
         elo_per_game = calculate_elo_per_game(all_games)
         print(f"        → Elo für {len(elo_per_game)} Spiele berechnet")
 
-        # Schritt 4: Kumulative Samples erstellen
-        print("\n  [4/4] Erstelle kumulative Trainingssamples...")
-        sample_dicts = build_samples_cumulative(all_games, advanced_stats, elo_per_game)
+        # Schritt 3: Kumulative Samples erstellen (Advanced Stats aus kumulativen Daten)
+        print("\n  [3/3] Erstelle kumulative Trainingssamples...")
+        sample_dicts = build_samples_cumulative(all_games, elo_per_game)
         print(f"        → {len(sample_dicts)} Samples erstellt")
 
         if not sample_dicts:
@@ -569,7 +594,7 @@ class TrainingDataCollector:
     def collect_with_progress(
         self,
         seasons: list[int] | None = None,
-        max_games: int = 5000,
+        max_games: int = DEFAULT_MAX_GAMES,
     ) -> list[TrainingSample]:
         """Sammelt Trainingsdaten und gibt sie als Liste zurück."""
         saved = self.collect(seasons, max_games)
@@ -661,17 +686,32 @@ class TrainingDataCollector:
     def _fetch_historical_games(
         self, seasons: list[int], max_games: int
     ) -> list[Game]:
-        """Lädt abgeschlossene Spiele – nutzt cursor-basierte Pagination."""
-        all_games: list[Game] = []
-        games_per_season = max_games // len(seasons)
+        """
+        Lädt abgeschlossene Spiele – nutzt cursor-basierte Pagination.
 
-        for season in seasons:
-            if len(all_games) >= max_games:
-                break
-            games = self.nba_client._fetch_season_games_paginated(season, games_per_season)
-            all_games.extend(games)
-            self.logger.info("Saison %d: %d Spiele geladen", season, len(games))
+        Strategie:
+          1. Jede Saison erhält ein gleiches Kontingent (max_games // len(seasons)).
+          2. Geladen wird von der neuesten zur ältesten Saison, damit bei einer
+             laufenden Saison (weniger Spiele verfügbar) das Kontingent sinnvoll
+             genutzt wird.
+          3. Am Ende chronologisch sortiert – zwingend für kumulative Stats.
 
+        Eine NBA-Saison hat ~1230 Spiele. Mit 4 Saisons und max_games=5000
+        erhält jede Saison ein Kontingent von 1250, was praktisch dem gesamten
+        verfügbaren Saisonumfang entspricht.
+        """
+        quota = max_games // len(seasons)
+        collected: dict[int, list[Game]] = {}
+
+        for season in sorted(seasons, reverse=True):  # neu → alt
+            games = self.nba_client._fetch_season_games_paginated(season, quota)
+            collected[season] = games
+            self.logger.info(
+                "Saison %d: %d / %d Spiele geladen", season, len(games), quota
+            )
+
+        # Chronologisch sortieren – für _CumulativeTeamTracker zwingend
+        all_games: list[Game] = [g for season in sorted(collected) for g in collected[season]]
         return all_games[:max_games]
 
     def _save_to_csv(self, samples: list[TrainingSample], path: Path) -> None:
