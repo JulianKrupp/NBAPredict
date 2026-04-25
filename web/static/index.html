@@ -30,10 +30,6 @@
     <span class="icon">⚖️</span>
     <span>Quoten</span>
   </button>
-  <button class="nav-btn" onclick="showPage('bets')" id="nav-bets">
-    <span class="icon">💰</span>
-    <span>Wetten</span>
-  </button>
 </nav>
 
 <!-- OFFLINE BANNER -->
@@ -82,8 +78,10 @@
   <div class="page" id="page-predict">
     <div class="page-header">
       <div class="page-title">KI-VORHERSAGE</div>
-      <div class="page-sub">ML-Modell · Wettquoten im Vergleich</div>
+      <div class="page-sub">ML-Pipeline · Mehrere Modelle · Monatliches Retraining</div>
     </div>
+    <!-- Pipeline-Status Widget -->
+    <div id="pipeline-status-widget"></div>
     <div class="card card-mb">
       <div class="predict-form">
         <div class="input-group">
@@ -128,24 +126,6 @@
         <div class="empty-text">Klicke Vergleichen um KI vs. Wettquoten zu laden</div>
       </div>
     </div>
-  </div>
-
-  <!-- ══════════════════════ BETS ══════════════════════ -->
-  <div class="page" id="page-bets">
-    <div class="page-header">
-      <div class="page-title">WETTEN</div>
-      <div class="page-sub">Virtuelles Wett-Tagebuch · "Was wäre wenn"</div>
-    </div>
-    <div class="bets-tabs">
-      <button class="bets-tab active" onclick="showBetsTab('dashboard')" id="btab-dashboard">Dashboard</button>
-      <button class="bets-tab" onclick="showBetsTab('open')" id="btab-open">Offen</button>
-      <button class="bets-tab" onclick="showBetsTab('history')" id="btab-history">Historie</button>
-    </div>
-    <div id="bets-tab-dashboard" class="bets-tab-content">
-      <div class="loading"><div class="spinner"></div>Lade Statistiken...</div>
-    </div>
-    <div id="bets-tab-open" class="bets-tab-content" style="display:none"></div>
-    <div id="bets-tab-history" class="bets-tab-content" style="display:none"></div>
   </div>
 
 

@@ -22,7 +22,7 @@ function showPage(id) {
   const loaders = {
     standings: loadStandings,
     scores: loadScores,
-    bets: loadBetsDashboard,
+    predict: loadPipelineStatus,
   };
   if (loaders[id]) loaders[id]();
 }
@@ -274,6 +274,157 @@ function quickPredict(home, away) {
 }
 
 // ══════════════════════════════════════════════════════
+//  ML PIPELINE STATUS
+// ══════════════════════════════════════════════════════
+let _pipelineRefreshTimer = null;
+
+async function loadPipelineStatus() {
+  const widget = document.getElementById('pipeline-status-widget');
+  if (!widget) return;
+
+  try {
+    const s = await apiFetch('/api/pipeline/status');
+    renderPipelineStatus(s, widget);
+
+    // Immer pollen – 3 s bei laufender Pipeline, 30 s im Ruhezustand.
+    // So sehen auch andere Browser-Tabs / Nutzer Änderungen zeitnah.
+    clearInterval(_pipelineRefreshTimer);
+    _pipelineRefreshTimer = setInterval(loadPipelineStatus, s.running ? 3000 : 30000);
+  } catch (e) {
+    widget.innerHTML = '';
+    clearInterval(_pipelineRefreshTimer);
+    _pipelineRefreshTimer = setInterval(loadPipelineStatus, 30000);
+  }
+}
+
+function renderPipelineStatus(s, widget) {
+  // Banner wenn Pipeline gerade läuft – kein Trigger-Button sichtbar
+  if (s.running) {
+    widget.innerHTML = `
+      <div class="pipeline-running-banner">
+        <div class="spinner" style="flex-shrink:0"></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-family:var(--head);font-weight:700;font-size:13px;color:var(--orange)">ML-Pipeline läuft …</div>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--text2);margin-top:2px;
+                      overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s.step || '&nbsp;'}</div>
+        </div>
+        <div style="font-size:11px;color:var(--text3);font-family:var(--mono);white-space:nowrap;flex-shrink:0">
+          Altes Modell aktiv bis Abschluss
+        </div>
+      </div>`;
+    return;
+  }
+
+  const active = s.active_model;
+  const models = s.models || [];
+
+  // Kein Modell vorhanden
+  if (!active && !models.length) {
+    widget.innerHTML = `
+      <div class="pipeline-info-bar">
+        <span style="color:var(--text3)">Kein ML-Modell vorhanden.</span>
+        <button class="btn btn-secondary pipeline-trigger-btn"
+                onclick="triggerPipeline()"
+                style="margin-left:auto;font-size:11px;padding:6px 12px">
+          ▶ Pipeline starten
+        </button>
+      </div>`;
+    return;
+  }
+
+  // Aktives Modell + Modell-Vergleich
+  const trainedAt = active?.trained_at
+    ? new Date(active.trained_at).toLocaleDateString('de-DE', {day:'2-digit', month:'2-digit', year:'numeric'})
+    : '—';
+  const lastMonth = s.last_trained_month ? ` · Training: ${s.last_trained_month}` : '';
+
+  const modelRows = models.length ? models.map(m => {
+    const isWinner = m.model_id === s.winner;
+    const badge = isWinner ? ' <span style="color:var(--green);font-size:10px">✓ Aktiv</span>' : '';
+    const accPct = (m.accuracy * 100).toFixed(1);
+    const auc = m.roc_auc?.toFixed(3) ?? '—';
+    const brier = m.brier_score?.toFixed(3) ?? '—';
+    const barW = Math.round(m.accuracy * 100);
+    return `
+      <div class="pipeline-model-row ${isWinner ? 'pipeline-model-winner' : ''}">
+        <div class="pipeline-model-name">${m.model_name}${badge}</div>
+        <div class="pipeline-model-bar-wrap">
+          <div class="pipeline-model-bar" style="width:${barW}%"></div>
+        </div>
+        <div class="pipeline-model-stats">
+          <span title="Accuracy">${accPct}%</span>
+          <span title="ROC-AUC" style="color:var(--text3)">AUC ${auc}</span>
+          <span title="Brier Score" style="color:var(--text3)">B ${brier}</span>
+        </div>
+      </div>`;
+  }).join('') : '';
+
+  const errorBanner = s.error
+    ? `<div style="background:rgba(220,38,38,0.1);border:1px solid rgba(220,38,38,0.3);border-radius:8px;
+                   padding:8px 12px;margin-bottom:12px;font-family:var(--mono);font-size:11px;color:#f87171">
+         Fehler: ${s.error}
+       </div>`
+    : '';
+
+  widget.innerHTML = `
+    ${errorBanner}
+    <div class="pipeline-info-bar">
+      <div style="min-width:0;overflow:hidden">
+        <span style="font-family:var(--head);font-weight:700;font-size:12px;color:var(--text1)">${active?.model_name ?? '—'}</span>
+        <span style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-left:8px">
+          Accuracy ${active ? (active.accuracy*100).toFixed(1)+'%' : '—'} · ROC-AUC ${active?.roc_auc?.toFixed(3) ?? '—'}
+        </span>
+        <span style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-left:8px">${trainedAt}${lastMonth}</span>
+      </div>
+      <button class="btn btn-secondary pipeline-trigger-btn"
+              onclick="triggerPipeline()"
+              style="margin-left:auto;flex-shrink:0;font-size:11px;padding:6px 12px"
+              title="Pipeline manuell neu starten">
+        ↺ Neu trainieren
+      </button>
+    </div>
+    ${modelRows ? `<div class="pipeline-models">${modelRows}</div>` : ''}`;
+}
+
+async function triggerPipeline() {
+  // Alle Trigger-Buttons sofort deaktivieren und Spinner zeigen –
+  // unabhängig davon, wie viele Tabs die Seite geöffnet haben.
+  const btns = document.querySelectorAll('.pipeline-trigger-btn');
+  btns.forEach(b => {
+    b.disabled = true;
+    b._origHtml = b.innerHTML;
+    b.innerHTML = '<span class="btn-spinner"></span> Startet …';
+  });
+
+  try {
+    const r = await fetch(API + '/api/pipeline/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const d = await r.json();
+
+    if (!r.ok && r.status !== 409) {
+      // Echter Fehler (nicht "läuft bereits") → Button wiederherstellen
+      btns.forEach(b => { b.disabled = false; b.innerHTML = b._origHtml; });
+      alert(d.error || 'Pipeline konnte nicht gestartet werden.');
+      return;
+    }
+
+    // 200 (gestartet) oder 409 (läuft bereits von anderem Nutzer) →
+    // Sofort Running-Banner zeigen (optimistisch), bevor der Server-Thread
+    // pipeline_status.json aktualisiert hat.
+    const widget = document.getElementById('pipeline-status-widget');
+    if (widget) renderPipelineStatus({ running: true, step: 'Starte Pipeline …' }, widget);
+    clearInterval(_pipelineRefreshTimer);
+    _pipelineRefreshTimer = setInterval(loadPipelineStatus, 3000);
+  } catch (e) {
+    btns.forEach(b => { b.disabled = false; b.innerHTML = b._origHtml; });
+    alert('Verbindungsfehler: ' + e.message);
+  }
+}
+
+// ══════════════════════════════════════════════════════
 //  PREDICT
 // ══════════════════════════════════════════════════════
 function predInputChanged() {
@@ -425,9 +576,6 @@ async function loadCompare() {
       return;
     }
 
-    // Global speichern für placeBet
-    window._compareEntries = entries;
-
     const cards = entries.map((e, idx) => {
       const hp  = (e.ml_home   * 100).toFixed(1);
       const ap  = (e.ml_away   * 100).toFixed(1);
@@ -454,16 +602,6 @@ async function loadCompare() {
             <div class="bet-detail-value" style="color:${evAwayColor}">${e.ev_away >= 0 ? '+' : ''}${(e.ev_away * 100).toFixed(1)}%</div>
             <div style="font-size:10px;color:var(--text3);font-family:var(--mono)">Edge: ${edgeAwaySign}${(e.edge_away * 100).toFixed(1)}%</div>
           </div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;">
-          <button class="btn btn-secondary" style="font-size:11px;padding:7px"
-            onclick="placeBetFromCompare(${idx},'home')">
-            💰 ${e.home} @ ${e.odds_home_raw}
-          </button>
-          <button class="btn btn-secondary" style="font-size:11px;padding:7px"
-            onclick="placeBetFromCompare(${idx},'away')">
-            💰 ${e.away} @ ${e.odds_away_raw}
-          </button>
         </div>`;
 
       return `
@@ -507,191 +645,6 @@ async function loadCompare() {
   } catch (e) {
     el.innerHTML = errorHtml(e.message);
   }
-}
-
-// ══════════════════════════════════════════════════════
-//  BETTING TRACKER
-// ══════════════════════════════════════════════════════
-
-function showBetsTab(tab) {
-  document.querySelectorAll('.bets-tab-content').forEach(el => el.style.display = 'none');
-  document.querySelectorAll('.bets-tab').forEach(el => el.classList.remove('active'));
-  document.getElementById('bets-tab-' + tab).style.display = 'block';
-  document.getElementById('btab-' + tab).classList.add('active');
-
-  if (tab === 'dashboard') loadBetsDashboard();
-  else if (tab === 'open') loadOpenBets();
-  else if (tab === 'history') loadBetsHistory();
-}
-
-async function loadBetsDashboard() {
-  const el = document.getElementById('bets-tab-dashboard');
-  el.innerHTML = loadingHtml('Lade Statistiken...');
-  try {
-    const stats = await apiFetch('/api/bets/stats');
-
-    if (stats.total_bets === 0) {
-      el.innerHTML = `
-        <div class="empty-msg">
-          <div class="empty-icon">💰</div>
-          <div class="empty-text">Noch keine Wetten platziert</div>
-          <div style="color:var(--text3);margin-top:8px;font-family:var(--mono);font-size:12px">
-            Gehe zu ⚖️ Quoten → Vergleichen und klicke auf ein Team
-          </div>
-        </div>`;
-      return;
-    }
-
-    const profitColor = stats.total_profit >= 0 ? 'var(--green)' : 'var(--red)';
-    const roiColor    = stats.roi >= 0 ? 'var(--green)' : 'var(--red)';
-
-    el.innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:14px;margin-bottom:20px;">
-        <div class="stat-badge"><div class="stat-val">${stats.won}W / ${stats.lost}L</div><div class="stat-lbl">Bilanz</div></div>
-        <div class="stat-badge"><div class="stat-val" style="color:${profitColor}">${stats.total_profit >= 0 ? '+' : ''}${stats.total_profit.toFixed(1)}</div><div class="stat-lbl">Profit</div></div>
-        <div class="stat-badge"><div class="stat-val" style="color:${roiColor}">${stats.roi >= 0 ? '+' : ''}${stats.roi.toFixed(1)}%</div><div class="stat-lbl">ROI</div></div>
-        <div class="stat-badge"><div class="stat-val">${(stats.win_rate * 100).toFixed(0)}%</div><div class="stat-lbl">Win-Rate</div></div>
-        <div class="stat-badge"><div class="stat-val">${stats.open_bets}</div><div class="stat-lbl">Offen</div></div>
-        <div class="stat-badge"><div class="stat-val">${stats.total_bets}</div><div class="stat-lbl">Gesamt</div></div>
-      </div>
-
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-primary" onclick="resolveAllBets()">🔄 Offene Wetten auflösen</button>
-        <button class="btn btn-secondary" onclick="confirmResetBets()">🗑️ Alle löschen</button>
-      </div>
-    `;
-  } catch (e) {
-    el.innerHTML = errorHtml(e.message);
-  }
-}
-
-async function loadOpenBets() {
-  const el = document.getElementById('bets-tab-open');
-  el.innerHTML = loadingHtml('Lade offene Wetten...');
-  try {
-    const bets = await apiFetch('/api/bets?status=open');
-    if (!bets.length) {
-      el.innerHTML = `<div class="empty-msg"><div class="empty-icon">✅</div><div class="empty-text">Keine offenen Wetten</div></div>`;
-      return;
-    }
-    el.innerHTML = `<div class="bets-grid">${bets.map(renderBetCard).join('')}</div>`;
-  } catch (e) { el.innerHTML = errorHtml(e.message); }
-}
-
-async function loadBetsHistory() {
-  const el = document.getElementById('bets-tab-history');
-  el.innerHTML = loadingHtml('Lade Wett-Historie...');
-  try {
-    const bets = await apiFetch('/api/bets');
-    if (!bets.length) {
-      el.innerHTML = `<div class="empty-msg"><div class="empty-icon">📊</div><div class="empty-text">Noch keine Wetten</div></div>`;
-      return;
-    }
-    el.innerHTML = `<div class="bets-grid">${bets.map(renderBetCard).join('')}</div>`;
-  } catch (e) { el.innerHTML = errorHtml(e.message); }
-}
-
-function renderBetCard(b) {
-  const profitClass = b.profit > 0 ? 'bet-profit-positive' : b.profit < 0 ? 'bet-profit-negative' : '';
-  const statusClass = b.status;
-  const statusLabel = b.status === 'won' ? '✓ Gewonnen' : b.status === 'lost' ? '✗ Verloren' : '◷ Offen';
-
-  return `
-    <div class="bet-card bet-${statusClass}">
-      <div class="bet-card-header">
-        <div class="bet-card-matchup">${b.home_team} <span style="color:var(--text3)">vs</span> ${b.away_team}</div>
-        <div class="bet-card-status ${statusClass}">${statusLabel}</div>
-      </div>
-      <div style="font-size:12px;color:var(--orange);font-family:var(--head);font-weight:700;margin-bottom:8px">
-        Wette auf: ${b.bet_on} @ ${b.odds.toFixed(2)}
-      </div>
-      <div class="bet-card-body">
-        <div class="bet-card-stat">
-          <div class="bet-card-stat-label">Einsatz</div>
-          <div class="bet-card-stat-value">${b.stake.toFixed(1)}</div>
-        </div>
-        <div class="bet-card-stat">
-          <div class="bet-card-stat-label">EV</div>
-          <div class="bet-card-stat-value">${(b.ev * 100).toFixed(1)}%</div>
-        </div>
-        <div class="bet-card-stat">
-          <div class="bet-card-stat-label">Profit</div>
-          <div class="bet-card-stat-value ${profitClass}">${b.status !== 'open' ? (b.profit >= 0 ? '+' : '') + b.profit.toFixed(1) : '–'}</div>
-        </div>
-      </div>
-      ${b.actual_winner ? `
-        <div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-top:6px;display:flex;gap:12px;flex-wrap:wrap">
-          <span>Gewinner: ${b.actual_winner}</span>
-          ${b.home_score != null && b.away_score != null
-            ? `<span style="color:var(--text2)">${b.home_team} <strong style="color:var(--gold)">${b.home_score}:${b.away_score}</strong> ${b.away_team}</span>`
-            : ''}
-        </div>` : ''}
-      <div class="bet-card-actions">
-        ${b.model_version ? `<span class="bet-version-badge">${b.model_version}</span>` : ''}
-        <button onclick="deleteBet(${b.id})">Löschen</button>
-      </div>
-    </div>`;
-}
-
-async function placeBetFromCompare(idx, side) {
-  const e = window._compareEntries && window._compareEntries[idx];
-  if (!e) { alert('Daten nicht gefunden'); return; }
-
-  const isHome   = side === 'home';
-  const betTeam  = isHome ? e.home : e.away;
-  const betOdds  = isHome ? e.odds_home_raw : e.odds_away_raw;
-  const mlProb   = isHome ? e.ml_home : e.ml_away;
-  const oddsProb = isHome ? e.odds_home : e.odds_away;
-  const edge     = isHome ? e.edge_home : e.edge_away;
-  const ev       = isHome ? e.ev_home : e.ev_away;
-
-  try {
-    const res = await fetch(API + '/api/bets', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        home_team: e.home, away_team: e.away,
-        bet_on: betTeam, bet_side: side,
-        odds: betOdds, ml_prob: mlProb,
-        odds_prob: oddsProb, edge, ev,
-        bet_rating: 'none', stake: 10.0,
-      }),
-    });
-    const data = await res.json();
-    if (data.success) {
-      alert(`Wette #${data.bet_id} platziert: ${betTeam} @ ${betOdds}`);
-    } else {
-      alert('Fehler: ' + (data.error || 'Unbekannt'));
-    }
-  } catch (err) {
-    alert('Fehler: ' + err.message);
-  }
-}
-
-async function resolveAllBets() {
-  try {
-    const res = await fetch(API + '/api/bets/resolve', { method: 'POST' });
-    const data = await res.json();
-    alert(`Aufgelöst: ${data.resolved} (${data.won}W / ${data.lost}L)\nNoch offen: ${data.still_open}`);
-    loadBetsDashboard();
-  } catch (e) { alert('Fehler: ' + e.message); }
-}
-
-function confirmResetBets() {
-  if (!confirm('ALLE Wetten unwiderruflich löschen?')) return;
-  if (!confirm('Wirklich ALLE löschen? Das kann nicht rückgängig gemacht werden.')) return;
-  fetch(API + '/api/bets/reset', { method: 'POST' })
-    .then(() => loadBetsDashboard())
-    .catch(e => alert('Fehler: ' + e.message));
-}
-
-async function deleteBet(id) {
-  if (!confirm('Wette löschen?')) return;
-  try {
-    await fetch(API + '/api/bets/' + id, { method: 'DELETE' });
-    const activeTab = document.querySelector('.bets-tab.active');
-    if (activeTab) activeTab.click();
-  } catch (e) { alert('Fehler: ' + e.message); }
 }
 
 // ══════════════════════════════════════════════════════

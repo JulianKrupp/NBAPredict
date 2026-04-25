@@ -294,67 +294,51 @@ body::before {
 .diff-big { background: rgba(255,95,31,0.15); color: var(--orange2); }
 .diff-small { background: rgba(0,230,122,0.1); color: var(--green); }
 
-/* ── Wettempfehlung (Betting Recommendation) ─────── */
-.bet-recommendation { margin-top: 14px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg2); position: relative; overflow: hidden; }
-.bet-recommendation::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; }
-.bet-recommendation.bet-strong::before { background: linear-gradient(90deg, #ff5f1f, #ff9f1f); }
-.bet-recommendation.bet-good::before { background: linear-gradient(90deg, var(--green), #2eff8a); }
-.bet-recommendation.bet-slight::before { background: linear-gradient(90deg, var(--blue), var(--blue2)); }
-.bet-recommendation.bet-none::before { background: var(--border); }
-.bet-recommendation.bet-none { opacity: 0.55; }
-.bet-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.bet-label { font-family: var(--head); font-size: 12px; font-weight: 700; letter-spacing: 0.5px; }
-.bet-label.bet-strong { color: var(--orange); }
-.bet-label.bet-good   { color: var(--green); }
-.bet-label.bet-slight  { color: var(--blue2); }
-.bet-label.bet-none    { color: var(--text3); }
-.bet-confidence-bar { width: 60px; height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
-.bet-confidence-fill { height: 100%; border-radius: 3px; transition: width 0.6s ease; }
 .bet-details { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .bet-detail { display: flex; flex-direction: column; gap: 2px; }
 .bet-detail-label { font-size: 9px; font-family: var(--head); font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text3); }
 .bet-detail-value { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text1); }
 .bet-detail-value.positive { color: var(--green); }
 .bet-detail-value.negative { color: var(--red); }
-.bet-team-name { font-family: var(--head); font-size: 14px; font-weight: 800; color: var(--text1); }
 
 /* ══════════════════════════════════════════════════════
-   BETS PAGE
+   ML PIPELINE STATUS
 ══════════════════════════════════════════════════════ */
-.bets-tabs { display: flex; gap: 8px; margin-bottom: 20px; }
-.bets-tab {
-  padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border);
-  background: var(--bg2); color: var(--text3); cursor: pointer;
-  font-family: var(--head); font-size: 11px; font-weight: 700;
-  letter-spacing: 1px; text-transform: uppercase; transition: all 0.2s;
+.pipeline-running-banner {
+  display: flex; align-items: center; gap: 14px;
+  background: rgba(255,95,31,0.08); border: 1px solid rgba(255,95,31,0.25);
+  border-radius: 12px; padding: 14px 18px; margin-bottom: 16px;
 }
-.bets-tab:hover { border-color: var(--text3); color: var(--text2); }
-.bets-tab.active { background: rgba(255,95,31,0.15); border-color: var(--orange); color: var(--orange); }
+.pipeline-info-bar {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 12px; padding: 12px 16px; margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.pipeline-models { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.pipeline-model-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 12px;
+}
+.pipeline-model-row.pipeline-model-winner {
+  border-color: rgba(0,230,122,0.4);
+  background: rgba(0,230,122,0.05);
+}
+.pipeline-model-name { font-family: var(--head); font-size: 12px; font-weight: 700; color: var(--text1); width: 160px; flex-shrink: 0; }
+.pipeline-model-bar-wrap { flex: 1; height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden; min-width: 60px; }
+.pipeline-model-bar { height: 100%; background: linear-gradient(90deg, var(--orange), var(--orange2)); border-radius: 3px; transition: width 0.8s ease; }
+.pipeline-model-stats { display: flex; gap: 10px; font-family: var(--mono); font-size: 11px; color: var(--text2); flex-shrink: 0; }
 
-.bet-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; transition: border-color 0.2s; }
-.bet-card.bet-won { border-left: 3px solid var(--green); }
-.bet-card.bet-lost { border-left: 3px solid var(--red); }
-.bet-card.bet-open { border-left: 3px solid var(--gold); }
-.bet-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-.bet-card-matchup { font-family: var(--head); font-size: 14px; font-weight: 700; color: var(--text1); }
-.bet-card-status { font-family: var(--mono); font-size: 11px; padding: 3px 8px; border-radius: 6px; font-weight: 600; }
-.bet-card-status.open { background: rgba(255,193,7,0.15); color: var(--gold); }
-.bet-card-status.won { background: rgba(0,230,122,0.15); color: var(--green); }
-.bet-card-status.lost { background: rgba(255,61,90,0.15); color: var(--red); }
-.bet-card-body { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-.bet-card-stat { display: flex; flex-direction: column; gap: 2px; }
-.bet-card-stat-label { font-size: 9px; font-family: var(--head); font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text3); }
-.bet-card-stat-value { font-family: var(--mono); font-size: 13px; color: var(--text1); font-weight: 600; }
-.bet-profit-positive { color: var(--green) !important; }
-.bet-profit-negative { color: var(--red) !important; }
-.bets-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
-.bet-card-actions { display: flex; gap: 6px; margin-top: 10px; justify-content: flex-end; align-items: center; }
-.bet-card-actions button { font-size: 11px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg2); color: var(--text3); cursor: pointer; font-family: var(--mono); }
-.bet-card-actions button:hover { border-color: var(--red); color: var(--red); }
-.bet-version-badge { font-family: var(--mono); font-size: 10px; color: var(--text3); background: var(--bg2); border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; margin-right: auto; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rating-breakdown { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-top: 12px; }
-.rating-card { background: var(--bg2); border-radius: 10px; padding: 14px; }
-.rating-card-title { font-family: var(--head); font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text3); margin-bottom: 8px; }
+/* Inline-Spinner im Button (z.B. "Startet …") */
+.btn-spinner {
+  display: inline-block; width: 11px; height: 11px;
+  border: 2px solid currentColor; border-top-color: transparent;
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+  vertical-align: middle; margin-right: 4px;
+}
+/* Deaktivierter Button: kein Pointer, gedimmt */
+.btn:disabled { opacity: 0.55; cursor: not-allowed; pointer-events: none; }
 
 /* ══════════════════════════════════════════════════════
    TRAIN PAGE
