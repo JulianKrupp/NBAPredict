@@ -6,10 +6,13 @@ Nutzt das trainierte Logistic-Regression-Modell für Wahrscheinlichkeitsvorhersa
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+import joblib
 import numpy as np
 
 from src.models.team import Team
@@ -17,7 +20,7 @@ from src.api.odds_api_client import GameOdds
 from src.api.nba_stats_client import NBAStatsApiClient, AdvancedTeamStats
 from src.ml.data_collector import TrainingSample
 from src.ml.elo import calculate_elo_ratings
-from src.ml.model_trainer import NBAModelTrainer, MODEL_PATH
+from src.ml.model_trainer import NBAModelTrainer, MODEL_PATH, ACTIVE_MODEL_PATH, MODEL_DIR
 from src.utils.config import Config
 
 
@@ -53,6 +56,7 @@ class MLPredictor:
         self.stats_client = NBAStatsApiClient(config)
         self.trainer = NBAModelTrainer()
         self._model: Any | None = None
+        self._loaded_model_path: Path | None = None   # für Cache-Invalidierung
         self._elo_cache: dict[str, float] | None = None
         self._adv_stats_cache: dict[str, AdvancedTeamStats] | None = None
         self.logger = logging.getLogger(__name__)
@@ -111,20 +115,48 @@ class MLPredictor:
         )
 
     def is_model_available(self) -> bool:
-        return MODEL_PATH.exists()
+        return self._get_active_model_path() is not None
 
     def get_model_metrics(self) -> dict | None:
         return self.trainer.load_metrics()
 
+    def get_active_model_info(self) -> dict | None:
+        return self.trainer.get_active_model_info()
+
     # ── Private Methoden ─────────────────────────────────────────────────
 
+    def _get_active_model_path(self) -> Path | None:
+        """Gibt den Pfad des aktiv konfigurierten Modells zurück."""
+        if ACTIVE_MODEL_PATH.exists():
+            with open(ACTIVE_MODEL_PATH, encoding="utf-8") as f:
+                model_id = json.load(f).get("model_id", "logistic_regression")
+            path = MODEL_DIR / f"{model_id}.joblib"
+            if path.exists():
+                return path
+        # Legacy-Fallback
+        return MODEL_PATH if MODEL_PATH.exists() else None
+
     def _load_model(self) -> Any | None:
-        if self._model is None and MODEL_PATH.exists():
+        """
+        Lädt das aktive Modell. Invalidiert den Cache wenn active_model.json
+        auf ein anderes Modell zeigt (z.B. nach einem Pipeline-Lauf).
+        """
+        current_path = self._get_active_model_path()
+        if current_path is None:
+            return None
+
+        # Cache-Invalidierung: Pfad geändert → neu laden
+        if current_path != self._loaded_model_path:
+            self._model = None
+            self._loaded_model_path = current_path
+
+        if self._model is None:
             try:
-                self._model = self.trainer.load_model()
-                self.logger.info("ML-Modell geladen: %s", MODEL_PATH)
+                self._model = joblib.load(current_path)
+                self.logger.info("ML-Modell geladen: %s", current_path)
             except Exception as exc:
                 self.logger.warning("ML-Modell konnte nicht geladen werden: %s", exc)
+
         return self._model
 
     def _ml_predict(

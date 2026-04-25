@@ -6,7 +6,6 @@ Subkommandos:
   ml-predict
   train collect|model|all|metrics
   compare
-  bets list|stats|resolve|reset
 """
 
 import argparse
@@ -19,6 +18,7 @@ from src.utils.display import display_games, display_standings
 from src.utils.ml_display import display_ml_prediction, display_model_metrics
 from src.api.nba_api_client import NBAApiClient
 from src.api.odds_api_client import OddsApiClient
+from src.ml.data_collector import default_training_seasons, DEFAULT_MAX_GAMES
 from src.ml.ml_predictor import MLPredictor
 from src.ml.comparison import OddsVsMLComparison
 
@@ -41,28 +41,21 @@ def build_argument_parser() -> argparse.ArgumentParser:
     ml_p.add_argument("home_team")
     ml_p.add_argument("away_team")
 
+    _seasons = default_training_seasons()
     train_p  = sub.add_parser("train")
     train_sub = train_p.add_subparsers(dest="train_command")
     coll_p = train_sub.add_parser("collect")
-    coll_p.add_argument("--seasons", nargs="+", type=int, default=[2023, 2024])
-    coll_p.add_argument("--max-games", type=int, default=300)
+    coll_p.add_argument("--seasons", nargs="+", type=int, default=_seasons)
+    coll_p.add_argument("--max-games", type=int, default=DEFAULT_MAX_GAMES)
     train_sub.add_parser("model")
     all_p = train_sub.add_parser("all")
-    all_p.add_argument("--seasons", nargs="+", type=int, default=[2023, 2024])
-    all_p.add_argument("--max-games", type=int, default=300)
+    all_p.add_argument("--seasons", nargs="+", type=int, default=_seasons)
+    all_p.add_argument("--max-games", type=int, default=DEFAULT_MAX_GAMES)
     train_sub.add_parser("metrics")
 
     comp_p = sub.add_parser("compare")
     comp_p.add_argument("--home", type=str, default=None)
     comp_p.add_argument("--away", type=str, default=None)
-
-    bets_p = sub.add_parser("bets")
-    bets_sub = bets_p.add_subparsers(dest="bets_command")
-    bets_list_p = bets_sub.add_parser("list")
-    bets_list_p.add_argument("--status", choices=["open", "won", "lost", "all"], default="all")
-    bets_sub.add_parser("stats")
-    bets_sub.add_parser("resolve")
-    bets_sub.add_parser("reset")
 
     return parser
 
@@ -144,8 +137,8 @@ def handle_train(config, args):
         print("Schritt 1/2: Trainingsdaten sammeln...")
         collector = TrainingDataCollector(config)
         samples = collector.collect_with_progress(
-            seasons=getattr(args, "seasons", [2023, 2024]),
-            max_games=getattr(args, "max_games", 300),
+            seasons=getattr(args, "seasons", None),
+            max_games=getattr(args, "max_games", DEFAULT_MAX_GAMES),
         )
         if not samples:
             print("Fehler: Keine Trainingsdaten gesammelt.")
@@ -163,66 +156,6 @@ def handle_train(config, args):
 
     else:
         print("Verwendung: python main.py train [collect|model|all|metrics]")
-
-
-def handle_bets(args, config):
-    from src.betting.tracker import BettingTracker
-    from src.betting.resolver import BetResolver
-
-    cmd = getattr(args, "bets_command", None)
-    tracker = BettingTracker()
-
-    if cmd == "list":
-        status_filter = getattr(args, "status", "all")
-        with tracker._connect() as conn:
-            query = "SELECT * FROM bets"
-            params: list = []
-            if status_filter != "all":
-                query += " WHERE status = ?"
-                params.append(status_filter)
-            query += " ORDER BY placed_at DESC"
-            rows = conn.execute(query, params).fetchall()
-
-        if not rows:
-            print("Keine Wetten gefunden.")
-            return
-        print(f"\n{'─'*70}")
-        print(f"  {'ID':<4} {'Matchup':<30} {'Wette auf':<12} {'Quote':<6} {'Status':<8} {'Profit'}")
-        print(f"{'─'*70}")
-        for r in rows:
-            profit_str = f"{r['profit']:+.1f}" if r['status'] != 'open' else "–"
-            print(f"  {r['id']:<4} {r['home_team']+' vs '+r['away_team']:<30} {r['bet_on']:<12} {r['odds']:<6.2f} {r['status']:<8} {profit_str}")
-        print(f"{'─'*70}  ({len(rows)} Wetten)\n")
-
-    elif cmd == "stats":
-        stats = tracker.get_stats()
-        d = stats.to_dict()
-        print(f"\n{'='*40}")
-        print(f"  WETT-STATISTIKEN")
-        print(f"{'─'*40}")
-        print(f"  Gesamt:   {d['total_bets']} ({d['open_bets']} offen)")
-        print(f"  Bilanz:   {d['won']}W / {d['lost']}L")
-        print(f"  Win-Rate: {d['win_rate']*100:.1f}%")
-        print(f"  Profit:   {d['total_profit']:+.2f}")
-        print(f"  ROI:      {d['roi']:+.1f}%")
-        print(f"{'='*40}\n")
-
-    elif cmd == "resolve":
-        resolver = BetResolver(config)
-        result = resolver.resolve_all_open()
-        print(f"\n  Aufgelöst: {result['resolved']} ({result['won']}W / {result['lost']}L)")
-        print(f"  Noch offen: {result['still_open']}\n")
-
-    elif cmd == "reset":
-        print("⚠️  Alle Wetten unwiderruflich löschen?")
-        if input("  Bestätigen mit 'ja': ").strip().lower() != "ja":
-            print("  Abgebrochen.")
-            return
-        count = tracker.reset()
-        print(f"  ✅ {count} Wetten gelöscht.\n")
-
-    else:
-        print("Verwendung: python main.py bets [list|stats|resolve|reset]")
 
 
 def handle_compare(config, home_name, away_name):
@@ -265,7 +198,6 @@ def main() -> int:
             "ml-predict": lambda: handle_ml_predict(nba_client, odds_client, ml_predictor, args.home_team, args.away_team),
             "train":      lambda: handle_train(config, args),
             "compare":    lambda: handle_compare(config, getattr(args, "home", None), getattr(args, "away", None)),
-            "bets":       lambda: handle_bets(args, config),
         }
 
         handler = dispatch.get(args.command)
