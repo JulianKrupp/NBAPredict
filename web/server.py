@@ -27,10 +27,10 @@ from src.api.odds_api_client import OddsApiClient
 from src.ml.comparison import OddsVsMLComparison
 from src.ml.ml_predictor import MLPredictor
 from src.ml.model_trainer import NBAModelTrainer
+from src.ml.data_collector import default_training_seasons, DEFAULT_MAX_GAMES
+from src.ml.pipeline import MLPipeline
 from src.utils.config import Config
 from src.utils.logger import setup_logger
-from src.betting.tracker import BettingTracker
-from src.betting.resolver import BetResolver
 
 
 # ── App-Setup ─────────────────────────────────────────────────────────────────
@@ -48,11 +48,75 @@ nba_client   = NBAApiClient(config)
 odds_client  = OddsApiClient(config)
 ml_predictor = MLPredictor(config)
 comparison   = OddsVsMLComparison(config)
-bet_tracker  = BettingTracker()
-bet_resolver = BetResolver(config, bet_tracker)
+pipeline     = MLPipeline()
 
 # Training-Status (für den Fortschrittsbalken im Frontend)
 _training_status: dict = {"running": False, "step": "", "done": False, "error": ""}
+
+# Beim Server-Start: hängenden "running"-Status aus einem abgebrochenen
+# Lauf bereinigen. Kein Thread läuft mehr → running muss False sein.
+pipeline._update_status(running=False, step="", error="")
+
+
+def _run_pipeline_background(
+    seasons: list[int] | None = None,
+    max_games: int = DEFAULT_MAX_GAMES,
+) -> None:
+    """Startet die ML-Pipeline in einem Hintergrund-Thread."""
+    global _training_status
+    if _training_status.get("running"):
+        return
+    seasons = seasons or default_training_seasons()
+
+    def _run() -> None:
+        global _training_status
+        _training_status = {"running": True, "step": "Starte Pipeline...", "done": False, "error": ""}
+        try:
+            all_metrics = pipeline.run(
+                seasons=seasons,
+                max_games=max_games,
+                config=config,
+                progress_callback=lambda s: _training_status.update({"step": s}),
+            )
+            # Cache des Predictors ungültig machen → nächste Vorhersage lädt neues Modell
+            ml_predictor._model = None
+            ml_predictor._loaded_model_path = None
+
+            status = pipeline.get_status()
+            _training_status = {
+                "running": False,
+                "done":    True,
+                "step":    "Fertig",
+                "error":   "",
+                "models":  status.get("models", []),
+                "winner":  status.get("winner", ""),
+            }
+            logger.info("Pipeline abgeschlossen. Gewinner: %s", status.get("winner"))
+        except Exception as exc:
+            _training_status = {
+                "running": False, "done": False,
+                "step": "", "error": str(exc),
+            }
+            logger.error("Pipeline-Fehler: %s", exc)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def _monthly_scheduler() -> None:
+    """
+    Hintergrund-Thread: prüft stündlich ob ein neues Monats-Retraining fällig ist.
+    Startet die Pipeline automatisch wenn should_retrain() True zurückgibt.
+    """
+    import time
+    time.sleep(15)  # Server zuerst hochfahren lassen
+    while True:
+        try:
+            if not _training_status.get("running") and pipeline.should_retrain():
+                logger.info("Monatliches ML-Retraining wird automatisch gestartet.")
+                _run_pipeline_background()
+        except Exception as exc:
+            logger.error("Monatlicher Scheduler-Fehler: %s", exc)
+        time.sleep(3600)  # Stündlich prüfen
 
 
 def handle_errors(f):
@@ -227,45 +291,18 @@ def get_metrics():
     return jsonify({"available": True, **metrics})
 
 
-# ── API: Training auslösen (asynchron) ───────────────────────────────────────
+# ── API: Training auslösen (asynchron, über Pipeline) ────────────────────────
 
 @app.route("/api/train", methods=["POST"])
 def train():
-    global _training_status
-    if _training_status["running"]:
+    if _training_status.get("running"):
         return jsonify({"error": "Training läuft bereits"}), 409
 
     data    = request.get_json() or {}
-    seasons = data.get("seasons", [2023, 2024])
-    max_g   = data.get("max_games", 300)
+    seasons = data.get("seasons") or default_training_seasons()
+    max_g   = data.get("max_games", DEFAULT_MAX_GAMES)
 
-    def run():
-        global _training_status
-        _training_status = {"running": True, "step": "Starte...", "done": False, "error": ""}
-        try:
-            from src.ml.data_collector import TrainingDataCollector
-            _training_status["step"] = "Trainingsdaten sammeln..."
-            collector = TrainingDataCollector(config)
-            samples = collector.collect_with_progress(seasons=seasons, max_games=max_g)
-
-            if not samples:
-                _training_status = {"running": False, "step": "", "done": False,
-                                    "error": "Keine Trainingsdaten gesammelt"}
-                return
-
-            _training_status["step"] = f"Modell trainieren ({len(samples)} Samples)..."
-            trainer = NBAModelTrainer()
-            metrics = trainer.train(samples=samples)
-            _training_status = {
-                "running": False, "done": True, "step": "Fertig",
-                "error": "",
-                "accuracy": metrics.accuracy,
-                "model":    metrics.model_name,
-            }
-        except Exception as exc:
-            _training_status = {"running": False, "step": "", "done": False, "error": str(exc)}
-
-    threading.Thread(target=run, daemon=True).start()
+    _run_pipeline_background(seasons=seasons, max_games=max_g)
     return jsonify({"started": True})
 
 
@@ -274,84 +311,67 @@ def train_status():
     return jsonify(_training_status)
 
 
-# ── API: Wetten ───────────────────────────────────────────────────────────────
+# ── API: ML-Pipeline ──────────────────────────────────────────────────────────
 
-@app.route("/api/bets", methods=["GET"])
-@handle_errors
-def get_bets():
-    status = request.args.get("status")
-    limit = request.args.get("limit", 100, type=int)
-    bets = bet_tracker.get_all_bets(limit=limit, status=status)
-    return jsonify([{
-        "id": b.id, "home_team": b.home_team, "away_team": b.away_team,
-        "bet_on": b.bet_on, "bet_side": b.bet_side,
-        "odds": b.odds, "stake": b.stake,
-        "ml_prob": round(b.ml_prob, 3), "odds_prob": round(b.odds_prob, 3),
-        "edge": round(b.edge, 4), "ev": round(b.ev, 4),
-        "bet_rating": b.bet_rating, "status": b.status,
-        "actual_winner": b.actual_winner,
-        "home_score": b.home_score, "away_score": b.away_score,
-        "payout": round(b.payout, 2), "profit": round(b.profit, 2),
-        "placed_at": b.placed_at, "resolved_at": b.resolved_at,
-        "model_version": b.model_version,
-    } for b in bets])
+@app.route("/api/pipeline/status")
+def pipeline_status():
+    """
+    Gibt den vollständigen Pipeline-Status zurück:
+    - running: bool
+    - step: aktueller Schritt
+    - models: Liste aller Modell-Metriken aus dem letzten Lauf
+    - winner: model_id des besten Modells
+    - last_trained_month: "YYYY-MM" des letzten Trainings
+    - active_model: Info zum aktuell geladenen Modell
+    - error: Fehlermeldung falls vorhanden
+    """
+    status = pipeline.get_status()
+    active = ml_predictor.get_active_model_info()
+    return jsonify({**status, "active_model": active})
 
 
-@app.route("/api/bets", methods=["POST"])
-@handle_errors
-def place_bet():
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "JSON-Body fehlt"}), 400
-    required = ["home_team", "away_team", "bet_on", "bet_side", "odds",
-                "ml_prob", "odds_prob", "edge", "ev"]
-    missing = [f for f in required if f not in data]
-    if missing:
-        return jsonify({"error": f"Felder fehlen: {', '.join(missing)}"}), 400
-    bet = bet_tracker.place_bet(
-        home_team=data["home_team"], away_team=data["away_team"],
-        bet_on=data["bet_on"], bet_side=data["bet_side"],
-        odds=float(data["odds"]), ml_prob=float(data["ml_prob"]),
-        odds_prob=float(data["odds_prob"]), edge=float(data["edge"]),
-        ev=float(data["ev"]), bet_rating=data.get("bet_rating", "none"),
-        stake=float(data.get("stake", 10.0)),
-        model_version=data.get("model_version"),
-    )
-    return jsonify({"success": True, "bet_id": bet.id})
+@app.route("/api/pipeline/trigger", methods=["POST"])
+def pipeline_trigger():
+    """Löst manuell ein Pipeline-Retraining aus."""
+    if _training_status.get("running"):
+        return jsonify({"error": "Pipeline läuft bereits"}), 409
+
+    data    = request.get_json() or {}
+    seasons = data.get("seasons") or default_training_seasons()
+    max_g   = data.get("max_games", DEFAULT_MAX_GAMES)
+
+    _run_pipeline_background(seasons=seasons, max_games=max_g)
+    return jsonify({"started": True})
 
 
-@app.route("/api/bets/<int:bet_id>", methods=["DELETE"])
-def delete_bet(bet_id: int):
-    if not bet_tracker.delete_bet(bet_id):
-        return jsonify({"error": "Nicht gefunden"}), 404
-    return jsonify({"success": True})
+@app.route("/api/pipeline/models")
+def pipeline_models():
+    """Gibt die Metriken aller trainierten Modelle zurück."""
+    trainer = NBAModelTrainer()
+    return jsonify(trainer.load_all_metrics())
 
 
-@app.route("/api/bets/stats")
-def bet_stats():
-    return jsonify(bet_tracker.get_stats().to_dict())
-
-
-@app.route("/api/bets/history")
-def bet_history():
-    return jsonify(bet_tracker.get_profit_history())
-
-
-@app.route("/api/bets/resolve", methods=["POST"])
-def resolve_bets():
-    return jsonify(bet_resolver.resolve_all_open())
-
-
-@app.route("/api/bets/reset", methods=["POST"])
-def reset_bets():
-    return jsonify({"success": True, "deleted": bet_tracker.reset()})
+@app.route("/api/pipeline/reset", methods=["POST"])
+def pipeline_reset():
+    """
+    Setzt einen hängenden 'running'-Status zurück.
+    Nur erlaubt wenn kein aktiver Thread läuft (_training_status.running == False).
+    """
+    if _training_status.get("running"):
+        return jsonify({"error": "Pipeline läuft gerade – kein Reset möglich."}), 409
+    pipeline._update_status(running=False, step="", error="")
+    return jsonify({"reset": True})
 
 
 # ── Start ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # Monatlichen Retrain-Scheduler starten
+    threading.Thread(target=_monthly_scheduler, daemon=True).start()
+
     print("\n" + "="*55)
     print("  🏀 NBA Tracker Web-Server")
     print("  http://localhost:5000")
+    print("  ML-Pipeline: automatisches Monats-Retraining aktiv")
     print("="*55 + "\n")
     app.run(host="0.0.0.0", debug=False, port=5000, threaded=True)
