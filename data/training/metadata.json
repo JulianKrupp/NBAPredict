@@ -1,13 +1,13 @@
 {
-  "total_samples": 5631,
+  "total_samples": 4219,
   "seasons": [
+    2020,
     2021,
     2022,
     2023,
-    2024,
-    2025
+    2024
   ],
-  "home_win_rate": 0.5510566506837151,
+  "home_win_rate": 0.5536857075136288,
   "feature_count": 45,
   "features": [
     "home_win_rate",
@@ -57,6 +57,6 @@
     "diff_elo"
   ],
   "data_path": "data\\training\\training_data.csv",
-  "created_at": "2026-03-31",
+  "created_at": "2026-04-23",
   "version": "v4_cumulative"
 }

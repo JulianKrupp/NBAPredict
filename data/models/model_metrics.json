@@ -1,54 +1,54 @@
 {
   "model_name": "LogisticRegression",
-  "trained_at": "2026-04-02T00:00:00",
-  "accuracy": 0.6495,
-  "roc_auc": 0.6989,
-  "brier_score": 0.2183,
-  "cv_accuracy_mean": 0.6599,
-  "cv_accuracy_std": 0.0171,
-  "train_samples": 4504,
-  "test_samples": 1127,
+  "trained_at": "2026-04-23T10:14:44",
+  "accuracy": 0.6765,
+  "roc_auc": 0.7371,
+  "brier_score": 0.2059,
+  "cv_accuracy_mean": 0.6596,
+  "cv_accuracy_std": 0.0162,
+  "train_samples": 3375,
+  "test_samples": 844,
   "feature_count": 45,
   "top_features": [
     {
-      "feature": "home_elo",
-      "importance": 0.272
-    },
-    {
-      "feature": "diff_elo",
-      "importance": 0.2644
-    },
-    {
-      "feature": "home_fatigue_score",
-      "importance": 0.1456
-    },
-    {
-      "feature": "home_games_last_7_days",
-      "importance": 0.1421
-    },
-    {
-      "feature": "diff_fatigue",
-      "importance": 0.1344
-    },
-    {
-      "feature": "away_away_win_rate",
-      "importance": 0.115
-    },
-    {
       "feature": "diff_net_rating",
-      "importance": 0.0956
+      "importance": 0.3077
     },
     {
-      "feature": "away_elo",
-      "importance": 0.0922
+      "feature": "away_net_rating",
+      "importance": 0.228
     },
     {
-      "feature": "away_form_rating",
-      "importance": 0.0868
+      "feature": "home_true_shooting",
+      "importance": 0.2193
+    },
+    {
+      "feature": "home_net_rating",
+      "importance": 0.2125
+    },
+    {
+      "feature": "home_offensive_rating",
+      "importance": 0.2012
+    },
+    {
+      "feature": "away_offensive_rating",
+      "importance": 0.1919
+    },
+    {
+      "feature": "home_defensive_rating",
+      "importance": 0.1609
+    },
+    {
+      "feature": "away_point_diff",
+      "importance": 0.1543
+    },
+    {
+      "feature": "home_last_10_win_rate",
+      "importance": 0.1468
     },
     {
       "feature": "away_defensive_rating",
-      "importance": 0.0714
+      "importance": 0.1353
     }
   ]
 }
