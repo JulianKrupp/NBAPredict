@@ -1,54 +1,8 @@
 {
-  "model_name": "LogisticRegression",
-  "trained_at": "2026-04-23T10:14:44",
-  "accuracy": 0.6765,
-  "roc_auc": 0.7371,
-  "brier_score": 0.2059,
-  "cv_accuracy_mean": 0.6596,
-  "cv_accuracy_std": 0.0162,
-  "train_samples": 3375,
-  "test_samples": 844,
-  "feature_count": 45,
-  "top_features": [
-    {
-      "feature": "diff_net_rating",
-      "importance": 0.3077
-    },
-    {
-      "feature": "away_net_rating",
-      "importance": 0.228
-    },
-    {
-      "feature": "home_true_shooting",
-      "importance": 0.2193
-    },
-    {
-      "feature": "home_net_rating",
-      "importance": 0.2125
-    },
-    {
-      "feature": "home_offensive_rating",
-      "importance": 0.2012
-    },
-    {
-      "feature": "away_offensive_rating",
-      "importance": 0.1919
-    },
-    {
-      "feature": "home_defensive_rating",
-      "importance": 0.1609
-    },
-    {
-      "feature": "away_point_diff",
-      "importance": 0.1543
-    },
-    {
-      "feature": "home_last_10_win_rate",
-      "importance": 0.1468
-    },
-    {
-      "feature": "away_defensive_rating",
-      "importance": 0.1353
-    }
-  ]
+  "model_id": "logistic_regression",
+  "model_name": "Logistic Regression",
+  "accuracy": 0.6667,
+  "roc_auc": 0.7217,
+  "brier_score": 0.2117,
+  "trained_at": "2026-04-25T20:48:26"
 }

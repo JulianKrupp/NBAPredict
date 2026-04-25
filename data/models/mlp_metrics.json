@@ -1,0 +1,14 @@
+{
+  "model_id": "mlp",
+  "model_name": "Neural Network (MLP)",
+  "trained_at": "2026-04-25T20:48:39",
+  "accuracy": 0.6416,
+  "roc_auc": 0.7148,
+  "brier_score": 0.2138,
+  "cv_accuracy_mean": 0.6393,
+  "cv_accuracy_std": 0.0262,
+  "train_samples": 3501,
+  "test_samples": 876,
+  "feature_count": 45,
+  "top_features": []
+}

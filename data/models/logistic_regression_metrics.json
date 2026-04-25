@@ -1,0 +1,55 @@
+{
+  "model_id": "logistic_regression",
+  "model_name": "Logistic Regression",
+  "trained_at": "2026-04-25T20:48:26",
+  "accuracy": 0.6667,
+  "roc_auc": 0.7217,
+  "brier_score": 0.2117,
+  "cv_accuracy_mean": 0.655,
+  "cv_accuracy_std": 0.0172,
+  "train_samples": 3501,
+  "test_samples": 876,
+  "feature_count": 45,
+  "top_features": [
+    {
+      "feature": "away_win_rate",
+      "importance": 0.3087
+    },
+    {
+      "feature": "home_win_rate",
+      "importance": 0.2961
+    },
+    {
+      "feature": "diff_elo",
+      "importance": 0.241
+    },
+    {
+      "feature": "home_elo",
+      "importance": 0.1963
+    },
+    {
+      "feature": "away_elo",
+      "importance": 0.1437
+    },
+    {
+      "feature": "home_away_win_rate",
+      "importance": 0.1379
+    },
+    {
+      "feature": "away_away_win_rate",
+      "importance": 0.116
+    },
+    {
+      "feature": "away_home_win_rate",
+      "importance": 0.1057
+    },
+    {
+      "feature": "home_fatigue_score",
+      "importance": 0.0892
+    },
+    {
+      "feature": "diff_fatigue",
+      "importance": 0.0799
+    }
+  ]
+}

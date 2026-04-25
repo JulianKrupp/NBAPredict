@@ -1,0 +1,55 @@
+{
+  "model_id": "random_forest",
+  "model_name": "Random Forest",
+  "trained_at": "2026-04-25T20:48:33",
+  "accuracy": 0.6301,
+  "roc_auc": 0.7,
+  "brier_score": 0.218,
+  "cv_accuracy_mean": 0.6541,
+  "cv_accuracy_std": 0.0213,
+  "train_samples": 3501,
+  "test_samples": 876,
+  "feature_count": 45,
+  "top_features": [
+    {
+      "feature": "diff_elo",
+      "importance": 0.0635
+    },
+    {
+      "feature": "diff_point_diff",
+      "importance": 0.0578
+    },
+    {
+      "feature": "diff_net_rating",
+      "importance": 0.0576
+    },
+    {
+      "feature": "diff_win_rate",
+      "importance": 0.0469
+    },
+    {
+      "feature": "home_elo",
+      "importance": 0.0404
+    },
+    {
+      "feature": "home_win_rate",
+      "importance": 0.0357
+    },
+    {
+      "feature": "away_elo",
+      "importance": 0.0334
+    },
+    {
+      "feature": "home_point_diff",
+      "importance": 0.032
+    },
+    {
+      "feature": "away_point_diff",
+      "importance": 0.0318
+    },
+    {
+      "feature": "home_net_rating",
+      "importance": 0.0315
+    }
+  ]
+}

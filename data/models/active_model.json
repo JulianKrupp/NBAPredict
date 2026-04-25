@@ -1,0 +1,8 @@
+{
+  "model_id": "logistic_regression",
+  "model_name": "Logistic Regression",
+  "accuracy": 0.6667,
+  "roc_auc": 0.7217,
+  "brier_score": 0.2117,
+  "trained_at": "2026-04-25T20:48:26"
+}

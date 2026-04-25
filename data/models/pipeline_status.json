@@ -1,0 +1,190 @@
+{
+  "running": false,
+  "step": "Fertig",
+  "started_at": "2026-04-25T20:34:51",
+  "finished_at": "2026-04-25T20:48:39",
+  "last_trained_month": "2026-04",
+  "models": [
+    {
+      "model_id": "logistic_regression",
+      "model_name": "Logistic Regression",
+      "trained_at": "2026-04-25T20:48:26",
+      "accuracy": 0.6667,
+      "roc_auc": 0.7217,
+      "brier_score": 0.2117,
+      "cv_accuracy_mean": 0.655,
+      "cv_accuracy_std": 0.0172,
+      "train_samples": 3501,
+      "test_samples": 876,
+      "feature_count": 45,
+      "top_features": [
+        {
+          "feature": "away_win_rate",
+          "importance": 0.3087
+        },
+        {
+          "feature": "home_win_rate",
+          "importance": 0.2961
+        },
+        {
+          "feature": "diff_elo",
+          "importance": 0.241
+        },
+        {
+          "feature": "home_elo",
+          "importance": 0.1963
+        },
+        {
+          "feature": "away_elo",
+          "importance": 0.1437
+        },
+        {
+          "feature": "home_away_win_rate",
+          "importance": 0.1379
+        },
+        {
+          "feature": "away_away_win_rate",
+          "importance": 0.116
+        },
+        {
+          "feature": "away_home_win_rate",
+          "importance": 0.1057
+        },
+        {
+          "feature": "home_fatigue_score",
+          "importance": 0.0892
+        },
+        {
+          "feature": "diff_fatigue",
+          "importance": 0.0799
+        }
+      ]
+    },
+    {
+      "model_id": "random_forest",
+      "model_name": "Random Forest",
+      "trained_at": "2026-04-25T20:48:33",
+      "accuracy": 0.6301,
+      "roc_auc": 0.7,
+      "brier_score": 0.218,
+      "cv_accuracy_mean": 0.6541,
+      "cv_accuracy_std": 0.0213,
+      "train_samples": 3501,
+      "test_samples": 876,
+      "feature_count": 45,
+      "top_features": [
+        {
+          "feature": "diff_elo",
+          "importance": 0.0635
+        },
+        {
+          "feature": "diff_point_diff",
+          "importance": 0.0578
+        },
+        {
+          "feature": "diff_net_rating",
+          "importance": 0.0576
+        },
+        {
+          "feature": "diff_win_rate",
+          "importance": 0.0469
+        },
+        {
+          "feature": "home_elo",
+          "importance": 0.0404
+        },
+        {
+          "feature": "home_win_rate",
+          "importance": 0.0357
+        },
+        {
+          "feature": "away_elo",
+          "importance": 0.0334
+        },
+        {
+          "feature": "home_point_diff",
+          "importance": 0.032
+        },
+        {
+          "feature": "away_point_diff",
+          "importance": 0.0318
+        },
+        {
+          "feature": "home_net_rating",
+          "importance": 0.0315
+        }
+      ]
+    },
+    {
+      "model_id": "xgboost",
+      "model_name": "XGBoost",
+      "trained_at": "2026-04-25T20:48:35",
+      "accuracy": 0.6461,
+      "roc_auc": 0.6984,
+      "brier_score": 0.2203,
+      "cv_accuracy_mean": 0.6421,
+      "cv_accuracy_std": 0.0236,
+      "train_samples": 3501,
+      "test_samples": 876,
+      "feature_count": 45,
+      "top_features": [
+        {
+          "feature": "diff_net_rating",
+          "importance": 0.0697
+        },
+        {
+          "feature": "diff_point_diff",
+          "importance": 0.06
+        },
+        {
+          "feature": "diff_elo",
+          "importance": 0.0545
+        },
+        {
+          "feature": "diff_win_rate",
+          "importance": 0.027
+        },
+        {
+          "feature": "home_last_5_win_rate",
+          "importance": 0.0245
+        },
+        {
+          "feature": "away_days_rest",
+          "importance": 0.0231
+        },
+        {
+          "feature": "home_elo",
+          "importance": 0.0227
+        },
+        {
+          "feature": "diff_fatigue",
+          "importance": 0.0221
+        },
+        {
+          "feature": "home_net_rating",
+          "importance": 0.0218
+        },
+        {
+          "feature": "away_form_rating",
+          "importance": 0.0216
+        }
+      ]
+    },
+    {
+      "model_id": "mlp",
+      "model_name": "Neural Network (MLP)",
+      "trained_at": "2026-04-25T20:48:39",
+      "accuracy": 0.6416,
+      "roc_auc": 0.7148,
+      "brier_score": 0.2138,
+      "cv_accuracy_mean": 0.6393,
+      "cv_accuracy_std": 0.0262,
+      "train_samples": 3501,
+      "test_samples": 876,
+      "feature_count": 45,
+      "top_features": []
+    }
+  ],
+  "winner": "logistic_regression",
+  "error": ""
+}

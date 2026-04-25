@@ -1,0 +1,55 @@
+{
+  "model_id": "xgboost",
+  "model_name": "XGBoost",
+  "trained_at": "2026-04-25T20:48:35",
+  "accuracy": 0.6461,
+  "roc_auc": 0.6984,
+  "brier_score": 0.2203,
+  "cv_accuracy_mean": 0.6421,
+  "cv_accuracy_std": 0.0236,
+  "train_samples": 3501,
+  "test_samples": 876,
+  "feature_count": 45,
+  "top_features": [
+    {
+      "feature": "diff_net_rating",
+      "importance": 0.0697
+    },
+    {
+      "feature": "diff_point_diff",
+      "importance": 0.06
+    },
+    {
+      "feature": "diff_elo",
+      "importance": 0.0545
+    },
+    {
+      "feature": "diff_win_rate",
+      "importance": 0.027
+    },
+    {
+      "feature": "home_last_5_win_rate",
+      "importance": 0.0245
+    },
+    {
+      "feature": "away_days_rest",
+      "importance": 0.0231
+    },
+    {
+      "feature": "home_elo",
+      "importance": 0.0227
+    },
+    {
+      "feature": "diff_fatigue",
+      "importance": 0.0221
+    },
+    {
+      "feature": "home_net_rating",
+      "importance": 0.0218
+    },
+    {
+      "feature": "away_form_rating",
+      "importance": 0.0216
+    }
+  ]
+}
