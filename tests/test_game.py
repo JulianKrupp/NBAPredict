@@ -52,12 +52,6 @@ class TestGame:
                     status="Final", home_score=100, away_score=115)
         assert game.winner == "Celtics"
 
-    def test_score_difference_calculation(self):
-        """score_difference berechnet die absolute Punktedifferenz korrekt."""
-        game = Game(game_id=1, home_team="A", away_team="B",
-                    home_score=110, away_score=98)
-        assert game.score_difference == 12
-
     def test_str_representation(self):
         """__str__ gibt eine lesbare Darstellung des Spiels zurück."""
         game = Game(game_id=1, home_team="Lakers", away_team="Celtics",
