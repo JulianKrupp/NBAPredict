@@ -29,8 +29,6 @@ from sklearn.metrics import accuracy_score, roc_auc_score, brier_score_loss
 
 from src.ml.data_collector import TrainingSample, TRAINING_DATA_PATH
 
-logger = logging.getLogger(__name__)
-
 MODEL_DIR = Path("data/models")
 MODEL_PATH = MODEL_DIR / "nba_predictor.joblib"
 METRICS_PATH = MODEL_DIR / "model_metrics.json"

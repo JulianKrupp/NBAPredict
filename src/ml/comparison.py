@@ -16,8 +16,6 @@ from src.api.odds_api_client import OddsApiClient, GameOdds
 from src.ml.ml_predictor import MLPredictor
 from src.utils.config import Config
 
-logger = logging.getLogger(__name__)
-
 
 @dataclass
 class ComparisonEntry:

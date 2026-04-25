@@ -122,24 +122,6 @@ class NBAApiClient(BaseApiClient):
         self.logger.warning("Team '%s' nicht gefunden.", team_name)
         return None
 
-    def get_recent_games(self, team_name: str, num_games: int = 10) -> list[Game]:
-        resolved = self._resolve_team_name(team_name)
-        team_id = self._find_team_id(resolved)
-        if team_id is None:
-            self.logger.warning("Team-ID für '%s' nicht gefunden.", team_name)
-            return []
-        try:
-            resp = self.get(
-                f"{self.base_url}/games",
-                params={"team_ids[]": team_id, "per_page": min(num_games * 2, 100), "seasons[]": self._current_season()},
-                headers=self._default_headers,
-            )
-            games = self._parse_games(resp.get("data", []))
-            return [g for g in games if g.is_final][:num_games]
-        except ApiError as exc:
-            self.logger.error("Letzte Spiele für '%s' nicht ladbar: %s", team_name, exc)
-            return []
-
     def _fetch_season_games_paginated(self, season: int, max_games: int = 400) -> list[Game]:
         collected: list[Game] = []
         cursor: int | None = None
