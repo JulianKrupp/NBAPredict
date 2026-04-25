@@ -34,22 +34,12 @@ class Team:
     # Wird in _calculate_standings_from_games befüllt.
     recent_game_results: list[bool] = field(default_factory=list)
 
-    # ── NEU: Ruhetage & Belastungssteuerung ───────────────────────────────
-
     # Tage seit dem letzten Spiel (0 = Back-to-Back).
     days_rest: int = 2
 
     # Anzahl Spiele in den letzten 7 Tagen (Belastungsindikator).
+    # Der Faktor density_fatigue ist bei 2 Spielen/7 Tagen bei 0.0
     games_last_7_days: int = 2
-
-    # ── NEU: Verletzte Schlüsselspieler ──────────────────────────────────
-
-    # Anzahl verletzter Spieler (Starter / Top-Rotation).
-    injured_players_count: int = 0
-
-    # Geschätzter Anteil am Gesamtgehalt, der ausfällt (0.0–1.0).
-    # Dient als Proxy dafür, *wie wichtig* die Ausfälle sind.
-    injured_salary_ratio: float = 0.0
 
     # ── Properties: Basis ─────────────────────────────────────────────────
 
@@ -110,10 +100,11 @@ class Team:
     @property
     def current_streak(self) -> int:
         """Aktuelle Serie: positiv = Siegesserie, negativ = Niederlagenserie.
+        last_result True bei Sieg, False bei Niederlage
 
         Beispiel: [W, W, L, W, W, W] → +3  (drei Siege in Folge)
                   [W, L, L, L]       → -3  (drei Niederlagen in Folge)
-                  []                  →  0
+                  []                 →  0
         """
         if not self.recent_game_results:
             return 0
@@ -131,8 +122,8 @@ class Team:
         """Gewichtete Formkurve: L3 (30 %) + L5 (40 %) + L10 (30 %).
 
         Drei Fenster geben ein ausgewogeneres Bild als nur L5/L10:
-        - L3  fängt *ganz aktuelle* Dynamik ein (z. B. Spieler-Rückkehr).
-        - L5  ist der Kern-Formindikator.
+        - L3 fängt *ganz aktuelle* Dynamik ein (z. B. Spieler-Rückkehr).
+        - L5 ist der Kern-Formindikator.
         - L10 glättet Ausreißer und verhindert Überreaktion.
         """
         if not self.recent_game_results:
@@ -151,22 +142,12 @@ class Team:
     # ── Properties: Belastung ─────────────────────────────────────────────
 
     @property
-    def is_back_to_back(self) -> bool:
-        """True, wenn das Team gestern gespielt hat (0 Ruhetage)."""
-        return self.days_rest == 0
-
-    @property
-    def is_well_rested(self) -> bool:
-        """True, wenn >= 3 Ruhetage (z. B. nach All-Star-Break)."""
-        return self.days_rest >= 3
-
-    @property
     def fatigue_score(self) -> float:
         """Ermüdungswert zwischen 0.0 (ausgeruht) und 1.0 (stark belastet).
 
         Kombiniert Ruhetage und Spieldichte der letzten Woche.
         """
-        # Ruhetage: 0 → 1.0 (B2B), 1 → 0.5, 2 → 0.25, 3+ → 0.0
+        # Ruhetage: 0 → 1.0 (B2B), 1 → 0.45, 2 → 0.15, 3+ → 0.0
         if self.days_rest >= 3:
             rest_fatigue = 0.0
         elif self.days_rest == 2:
@@ -180,24 +161,6 @@ class Team:
         density_fatigue = min(1.0, max(0.0, (self.games_last_7_days - 2) / 2.0))
 
         return 0.65 * rest_fatigue + 0.35 * density_fatigue
-
-    # ── Properties: Verletzungen ──────────────────────────────────────────
-
-    @property
-    def injury_impact(self) -> float:
-        """Geschätzter Verletzungseinfluss zwischen 0.0 (gesund) und 1.0.
-
-        Kombiniert Anzahl verletzter Spieler mit deren Bedeutung
-        (über den Gehaltsanteil approximiert).
-        """
-        # Anzahl: jeder verletzte Rotationsspieler zählt ~0.08
-        count_impact = min(1.0, self.injured_players_count * 0.08)
-
-        # Gehalt: wenn 30 %+ des Gehalts ausfällt, ist das gravierend
-        salary_impact = min(1.0, self.injured_salary_ratio / 0.35)
-
-        # Gehalt wiegt stärker – ein verletzter Star > drei verletzte Bankdrücker
-        return 0.35 * count_impact + 0.65 * salary_impact
 
     # ── Dunder & Factory ──────────────────────────────────────────────────
 

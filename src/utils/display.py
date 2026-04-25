@@ -71,10 +71,3 @@ def _format_status(game: "Game") -> str:
         "scheduled": "Geplant",
     }
     return status_map.get(game.status, game.status)
-
-
-def _progress_bar(value: float, width: int = 20) -> str:
-    """Erstellt einen einfachen ASCII-Fortschrittsbalken (0.0–1.0)."""
-    clamped = max(0.0, min(1.0, value))
-    filled  = round(clamped * width)
-    return f"[{'█' * filled}{'░' * (width - filled)}]"
