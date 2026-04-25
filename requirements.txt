@@ -8,7 +8,8 @@ urllib3>=2.0.0
 # Umgebungsvariablen aus .env-Datei laden
 python-dotenv>=1.0.0
 
-# API 3: NBA.com Advanced Stats (kein API-Key erforderlich!)
+# NBA.com Advanced Stats für Live-Vorhersagen (kein API-Key erforderlich)
+# Nicht mehr für Training genutzt (Data Leakage verhindert)
 # Dokumentation: https://github.com/swar/nba_api
 nba_api>=1.4.0
 

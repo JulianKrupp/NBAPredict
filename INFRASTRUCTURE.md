@@ -242,8 +242,8 @@ Verzeichnissen im Container.
 
 Format: `HOST_PFAD:CONTAINER_PFAD`
 
-Ohne Volumes wären die SQLite-Datenbank (`data/betting/bets.db`) und das
-trainierte Modell (`data/models/`) nach jedem `docker compose down` verloren,
+Ohne Volumes wären die trainierten Modelle (`data/models/`) und der
+Pipeline-Status nach jedem `docker compose down` verloren,
 weil das Container-Dateisystem flüchtig ist. Mit Volumes liegen die Daten
 auf dem Host und überleben jeden Neustart.
 
@@ -276,11 +276,11 @@ Mögliche Werte:
 - `on-failure` – nur bei Absturz (Exit-Code ≠ 0)
 
 ```yaml
-  # resolver:
+  # worker:
   #   build: .
   #   command: python -c "..."
 ```
-Auskommentierter optionaler Service für automatisches Bet-Resolving.
+Auskommentierter optionaler Service für zukünftige Hintergrund-Jobs.
 Zum Aktivieren die `#`-Zeichen entfernen.
 
 #### Wichtigste Befehle:
@@ -422,7 +422,7 @@ Migration.
 [project]
 name = "nba-predict"
 version = "0.9.0"
-description = "KI-gestütztes NBA Vorhersage- und Wettanalyse-System"
+description = "KI-gestütztes NBA Vorhersagesystem mit Multi-Modell-Pipeline"
 requires-python = ">=3.12"
 readme = "README.md"
 

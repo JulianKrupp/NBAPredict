@@ -41,4 +41,12 @@ htmlcov/
 # Temporäre Dateien
 *.tmp
 *.bak
+temp
 data/cache/
+
+# Generierte Trainingsdaten (groß, lokal neu erzeugbar)
+data/training/training_data.csv
+
+# Pipeline-Laufzeitstatus (ändert sich ständig, kein Mehrwert in Git)
+data/models/pipeline_status.json
+data/models/active_model.json

@@ -1,6 +1,6 @@
 # 🏀 NBA Predict
 
-NBA-Wettempfehlungssystem mit ML-Vorhersage, regelbasiertem Modell, Quoten-Vergleich und virtuellem Wett-Tracker. Läuft als Web-App (Docker) oder CLI.
+NBA-Vorhersagesystem mit ML-Pipeline, Quoten-Vergleich und EV-Analyse. Läuft als Web-App (Docker) oder CLI.
 
 ---
 
@@ -10,9 +10,9 @@ NBA-Wettempfehlungssystem mit ML-Vorhersage, regelbasiertem Modell, Quoten-Vergl
 |---|-----|-------|-----|
 | 1 | [BallDontLie](https://www.balldontlie.io) | Spielergebnisse, Scores, Trainingsdaten | ✅ Free Tier |
 | 2 | [The Odds API](https://the-odds-api.com) | Buchmacher-Quoten (500 Req/Monat) | ✅ Free Tier |
-| 3 | [nba_api](https://github.com/swar/nba_api) | Advanced Stats von stats.nba.com | ❌ Kein Key |
+| 3 | [nba_api](https://github.com/swar/nba_api) | Advanced Stats von stats.nba.com (nur Vorhersage) | ❌ Kein Key |
 
-> **Hinweis:** `nba_api` ist ein inoffizielles Community-Package das stats.nba.com abfragt. Kein Account nötig, aber künstliche Delays vermeiden Rate-Limiting.
+> **Hinweis:** `nba_api` ist ein inoffizielles Community-Package das stats.nba.com abfragt. Wird nur bei der Live-Vorhersage genutzt, nicht mehr beim Training.
 
 ---
 
@@ -54,9 +54,8 @@ ODDS_API_KEY=...          # Optional → the-odds-api.com (für Quoten-Vergleich
 |-----|----------|
 | **Stand** | Tabelle berechnet aus Spielergebnissen (kein /standings-Endpunkt im Free Tier) |
 | **Spiele** | Scores nach Datum, Auto-Refresh 1–7 Uhr MEZ |
-| **KI** | Vorhersage: ML-Modell + Regelmodell + Wettquoten im Vergleich |
-| **Quoten** | KI vs. Buchmacher – Edge, EV, Wettempfehlung mit Guardrails |
-| **Wetten** | Virtueller Wett-Tracker mit Analytik (ROI, Win-Rate, Rating-Aufschlüsselung) |
+| **KI-Vorhersage** | ML-Modell + Wettquoten im Vergleich, Pipeline-Status, manuelles Retraining |
+| **KI vs Quoten** | Wahrscheinlichkeitsvergleich, Vig-bereinigt, EV- und Edge-Analyse |
 
 ---
 
@@ -70,25 +69,18 @@ python main.py standings
 python main.py team lakers
 
 # Vorhersage
-python main.py predict lakers celtics          # Regelbasiert
-python main.py ml-predict lakers celtics       # ML + Regelmodell + Quoten
+python main.py ml-predict lakers celtics
 
 # Quoten-Vergleich
 python main.py compare
 python main.py compare --home lakers --away celtics
 
 # Training
+python main.py train collect                          # Daten sammeln (Standard: letzte 4 Saisons)
 python main.py train collect --seasons 2022 2023 2024 --max-games 5000
-python main.py train model
-python main.py train all --seasons 2023 2024
-python main.py train metrics
-
-# Wett-Verwaltung
-python main.py bets list [--status open|won|lost|all]
-python main.py bets stats
-python main.py bets resolve
-python main.py bets reset
-python main.py bets close-period [--label TEXT] [--notes TEXT]
+python main.py train model                            # Nur Modell trainieren
+python main.py train all                              # Alles in einem Schritt
+python main.py train metrics                          # Gespeicherte Metriken anzeigen
 ```
 
 ---
@@ -106,77 +98,56 @@ python main.py bets close-period [--label TEXT] [--notes TEXT]
 | Differenz-Features | Δ Win-Rate, Δ Punkt-Diff, Δ Net-Rating, Δ Form, Δ Streak, Δ Fatigue |
 | Elo | home_elo, away_elo, diff_elo |
 
-### Modellauswahl
+> Advanced Stats (Off-/Def-Rating, Pace, TS%) werden im Training **ausschließlich aus kumulativen Spielergebnissen geschätzt** – kein externer API-Abruf, kein Data Leakage.
 
-Vier Kandidaten werden per 5-Fold Stratified CV auf `neg_brier_score` verglichen:
+### Modell-Pipeline
 
-| Modell | Aufbau | Ergebnis |
-|--------|--------|---------|
-| **Logistic Regression** | StandardScaler + LogReg, C ∈ {0.1, 1, 10} | ✅ Gewinner – beste Kalibrierung |
-| Gradient Boosting | 150–300 Bäume, lr 0.03–0.08, max_depth 3–5 | ~gleiche Accuracy, schlechter kalibriert |
-| XGBoost | 200–400 Bäume, L1/L2-Regularisierung | ~gleiche Accuracy, overconfident |
-| Random Forest | 200–400 Bäume, max_depth 6–10, balanced | Schlechteste Kalibrierung |
+Jeden Monat werden alle vier Modelle auf denselben Daten trainiert. Das Modell mit dem höchsten **ROC-AUC** wird automatisch als aktives Modell gesetzt.
 
-> **Warum Logistic Regression?** Scoring-Metrik ist `neg_brier_score` — misst nicht nur ob die Vorhersage stimmt, sondern ob die *Wahrscheinlichkeit* stimmt. Kalibrierte Wahrscheinlichkeiten sind entscheidend für die EV-Berechnung der Wettempfehlungen. LogReg ist inherent gut kalibriert, XGBoost/RF sind es nicht.
+| Modell | Warum dabei |
+|--------|-------------|
+| **Logistic Regression** | Inherent gut kalibriert, liefert zuverlässige Wahrscheinlichkeiten |
+| **Random Forest** | Robustes Ensemble, fängt nicht-lineare Zusammenhänge |
+| **XGBoost** | Gradient Boosting, stark bei tabellarischen Daten |
+| **MLP** | Neuronales Netz, lernt komplexe Feature-Interaktionen |
 
-### Aktuelle Metriken (v1.2.0, trainiert 2026-04-02)
+> **Warum ROC-AUC als Auswahlkriterium?** ROC-AUC misst, wie gut das Modell zwischen Sieg und Niederlage unterscheiden kann – unabhängig vom Schwellenwert. Robust bei leicht unbalancierten Klassen (~55% Heimsiege).
 
-| Metrik | Wert |
-|--------|------|
-| Accuracy (Test) | 64.95% |
-| ROC-AUC | 0.6989 |
-| Brier Score | 0.2183 |
-| CV-Accuracy | 66.0% ± 1.7% |
-| Trainingssamples | 4504 (Saisons 2021–2025) |
+### Trainingsdaten
 
-> **Einordnung:** Heimsieg-Baseline ~55%, reines Elo-Modell ~60%, Buchmacher ~67%.
+- **Quelle:** BallDontLie API (abgeschlossene Spiele)
+- **Umfang:** ~5000 Spiele aus den letzten 4 NBA-Saisons (dynamisch berechnet)
+- **Saisons:** werden automatisch ermittelt – April 2026 → [2022, 2023, 2024, 2025]
+- **Kein Leakage:** Statistiken werden für jedes Spiel nur aus vorherigen Spielen berechnet
 
-### Regelbasiertes Modell (`src/prediction/predictor.py`)
+### Aktuelle Metriken
 
-Gewichteter Score aus 10 Faktoren (kein Training, immer verfügbar):
-
-```
-Win-Rate 18% · Punkt-Differenz 16% · Heimvorteil 12% · Form 12%
-Wettquoten 10% · Offense 8% · Defense 8% · Ruhetage 6%
-Verletzungen 6% · Streak 4%
+Nach dem letzten Training einsehbar über:
+```bash
+python main.py train metrics
+# oder im Web unter KI-Vorhersage → Modell-Übersicht
 ```
 
-Dient als Baseline, Fallback und Kreuzcheck gegenüber dem ML-Modell.
-
-### Wettempfehlung & Guardrails
-
-```
-Edge = KI-Prob − Buchmacher-Prob
-
-strong  → Edge > 15%
-good    → Edge > 8%
-slight  → Edge > 3%
-none    → darunter ODER Guardrail aktiv
-```
-
-**Guardrails:**
-```
-Quote > 6.0  UND  KI-Prob < 70%   →  "none"  (KI zu unsicher bei Außenseiter)
-Quote > 3.5  UND  Methoden uneinig →  "none"  (Markt und KI widersprechen sich)
-```
+> **Einordnung:** Heimsieg-Baseline ~55%, reines Elo-Modell ~60%, Buchmacher ~67%. Realistische Erwartung für ein faires Modell: 64–68%.
 
 ---
 
 ## Tests
 
 ```bash
-pytest                              # 197 Tests + Coverage
-pytest tests/test_comparison.py -v  # Guardrail-Tests
+pytest                              # Alle Tests + Coverage
+pytest tests/test_ml_system.py -v  # ML-Pipeline-Tests
 pytest tests/test_elo.py -v         # Elo + Data-Leakage-Tests
 ruff check src/                     # Linting
 ```
 
-| Datei | Tests | Schwerpunkt |
-|-------|-------|-------------|
-| `test_elo.py` | 15 | Nullsumme, Heimvorteil, MoV, Data Leakage |
-| `test_tracker.py` | 29 | place/resolve/stats, In-Memory-SQLite |
-| `test_comparison.py` | 23 | Guardrails, Edge-Stufen, EV-Formel, Vig |
-| `test_predictor.py` | ~15 | FACTOR_WEIGHTS, normalize, Fatigue |
+| Datei | Schwerpunkt |
+|-------|-------------|
+| `test_ml_system.py` | ML-Pipeline, CumulativeTeamTracker, compute_advanced_stats |
+| `test_elo.py` | Elo-Berechnung, Nullsumme, Heimvorteil |
+| `test_comparison.py` | KI vs. Quoten, EV-Formel, Edge-Stufen |
+| `test_api_clients.py` | API-Client-Logik |
+| `test_game.py` / `test_team.py` | Datenmodelle |
 
 ---
 
@@ -193,22 +164,16 @@ ruff check src/                     # Linting
 │   ├── api/
 │   │   ├── base_client.py          # HTTP-Basis (Retry, Cache, Circuit Breaker)
 │   │   ├── nba_api_client.py       # BallDontLie API
-│   │   ├── nba_stats_client.py     # nba_api → stats.nba.com
+│   │   ├── nba_stats_client.py     # nba_api → stats.nba.com (nur Vorhersage)
 │   │   └── odds_api_client.py      # The Odds API
 │   │
-│   ├── betting/
-│   │   ├── tracker.py              # SQLite Wett-Tracker
-│   │   └── resolver.py             # Auto-Auflösung offener Wetten
-│   │
 │   ├── ml/
-│   │   ├── data_collector.py       # Trainingsdaten-Pipeline (45 Features)
+│   │   ├── data_collector.py       # Trainingsdaten (45 Features, kumulativ, leak-frei)
 │   │   ├── elo.py                  # Elo-Rating-Berechnung
-│   │   ├── model_trainer.py        # LogReg / RF / GB / XGBoost + Grid Search
-│   │   ├── ml_predictor.py         # ML-Vorhersage
-│   │   └── comparison.py           # ML + Regelmodell vs. Wettquoten
-│   │
-│   ├── prediction/
-│   │   └── predictor.py            # Regelbasiertes Modell (10 Faktoren)
+│   │   ├── pipeline.py             # ML-Pipeline (Status, monatliches Retraining)
+│   │   ├── model_trainer.py        # 4 Modelle trainieren, bestes auswählen
+│   │   ├── ml_predictor.py         # ML-Vorhersage (lädt aktives Modell dynamisch)
+│   │   └── comparison.py           # ML vs. Wettquoten, EV-Berechnung
 │   │
 │   └── utils/
 │       ├── config.py
@@ -221,9 +186,8 @@ ruff check src/                     # Linting
 │
 ├── tests/
 └── data/
-    ├── training/                   # CSV + Metadaten
-    ├── models/                     # model.joblib + model_metrics.json
-    └── betting/                    # bets.db (SQLite)
+    ├── training/                   # CSV + Metadaten (lokal generiert, nicht in Git)
+    └── models/                     # *.joblib + Metriken-JSON + Pipeline-Status
 ```
 
 ---
