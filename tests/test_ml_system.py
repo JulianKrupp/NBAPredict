@@ -260,10 +260,20 @@ class TestCumulativeTeamTracker:
         # Neuester Sieg hat höchstes Gewicht → Rating > 0.2 (= 1/5)
         assert tracker.form_rating > 0.2
 
-    def test_advanced_stats_not_on_tracker(self):
-        """_CumulativeTeamTracker hat keine compute_advanced_stats mehr."""
+    def test_compute_advanced_stats_approximates_correctly(self):
+        """compute_advanced_stats() schätzt OffRtg/DefRtg/NetRtg/Pace/TS% aus kumulativen Daten."""
         tracker = _CumulativeTeamTracker("Test Team")
-        assert not hasattr(tracker, "compute_advanced_stats")
+        # 10 Spiele: 115 Pkt erzielt, 108 Pkt kassiert
+        for _ in range(10):
+            tracker.update(115, 108, True, True, "2024-11-01")
+
+        adv = tracker.compute_advanced_stats()
+        assert adv.offensive_rating == pytest.approx(115.0, abs=0.1)
+        assert adv.defensive_rating == pytest.approx(108.0, abs=0.1)
+        assert adv.net_rating == pytest.approx(7.0, abs=0.1)
+        assert adv.pace == pytest.approx(99.0, abs=0.01)
+        # TS% bei 115 Pkt/Spiel: 0.565 + (115 - 114) * 0.003 = 0.568
+        assert adv.true_shooting_pct == pytest.approx(0.568, abs=0.001)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -293,11 +303,17 @@ class TestNBAModelTrainer:
         trainer = NBAModelTrainer()
         # Temporäre Pfade setzen
         import src.ml.model_trainer as mt
-        orig_model = mt.MODEL_PATH
-        orig_metrics = mt.METRICS_PATH
-        mt.MODEL_PATH = tmp_path / "model.joblib"
-        mt.METRICS_PATH = tmp_path / "metrics.json"
-        mt.MODEL_DIR = tmp_path
+        orig_model       = mt.MODEL_PATH
+        orig_metrics     = mt.METRICS_PATH
+        orig_model_dir   = mt.MODEL_DIR
+        orig_active      = mt.ACTIVE_MODEL_PATH
+        orig_pipe_status = mt.PIPELINE_STATUS_PATH
+
+        mt.MODEL_DIR          = tmp_path
+        mt.MODEL_PATH         = tmp_path / "nba_predictor.joblib"
+        mt.METRICS_PATH       = tmp_path / "model_metrics.json"
+        mt.ACTIVE_MODEL_PATH  = tmp_path / "active_model.json"
+        mt.PIPELINE_STATUS_PATH = tmp_path / "pipeline_status.json"
 
         try:
             metrics = trainer.train(samples=samples, test_size=0.3)
@@ -305,8 +321,11 @@ class TestNBAModelTrainer:
             assert 0.0 <= metrics.accuracy <= 1.0
             assert metrics.feature_count == 45  # v4: 45 statt 46
         finally:
-            mt.MODEL_PATH = orig_model
-            mt.METRICS_PATH = orig_metrics
+            mt.MODEL_PATH           = orig_model
+            mt.METRICS_PATH         = orig_metrics
+            mt.MODEL_DIR            = orig_model_dir
+            mt.ACTIVE_MODEL_PATH    = orig_active
+            mt.PIPELINE_STATUS_PATH = orig_pipe_status
 
     def test_feature_names_match_sample_columns(self):
         trainer = NBAModelTrainer()

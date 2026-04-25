@@ -5,6 +5,260 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ---
 
+## [2.0.0] – Multi-Modell ML-Pipeline mit monatlichem Auto-Retraining
+
+Komplette Überarbeitung der ML-Komponente: Statt einem einzelnen
+Logistic-Regression-Modell werden jetzt vier Modelle parallel trainiert;
+das beste wird automatisch als aktives Modell gesetzt. Eine neue
+Pipeline-Infrastruktur startet jeden Monat ein vollständiges Retraining
+im Hintergrund – solange das neue Modell trainiert, bleibt das alte aktiv.
+
+### Modellauswahl (mit Literaturbelegen)
+
+| Modell | Literaturbeleg | Begründung |
+|--------|---------------|------------|
+| **Logistic Regression** | Kvam & Sokol (2006), *J. Quantitative Analysis in Sports* | Kalibrierte Wahrscheinlichkeiten; solide Baseline |
+| **Random Forest** | Bunker & Thabtah (2019), *Applied Computing and Informatics* | Robust gegenüber Rauschen; kein Scaler nötig |
+| **XGBoost** | Chen & Guestrin (2016), *KDD '16*; Zimmermann (2016), *IJCAI* | State-of-the-Art für tabellarische Daten |
+| **MLP Neural Network** | Loeffelholz et al. (2009), *J. Quantitative Analysis in Sports* | Erfasst nicht-lineare Interaktionen |
+
+Auswahlkriterium: **ROC-AUC** (robuster als Accuracy für EV-basierte
+Wahrscheinlichkeitsschätzung). Alle vier Modelle werden nach jedem Training
+in der Frontend-Vergleichsansicht nebeneinander dargestellt.
+
+### Hinzugefügt
+
+#### `src/ml/pipeline.py` (neu)
+
+Zentrale Orchestrierungsklasse `MLPipeline`:
+
+| Methode | Beschreibung |
+|---------|--------------|
+| `run(seasons, max_games, config)` | Daten sammeln → alle Modelle trainieren → aktives Modell setzen |
+| `should_retrain()` | `True` wenn aktueller Monat ≠ `last_trained_month` in `pipeline_status.json` |
+| `get_status()` | Liest `data/models/pipeline_status.json` |
+| `is_running()` | `True` solange Pipeline läuft |
+
+Status wird in `data/models/pipeline_status.json` persistiert:
+```json
+{
+  "running": false,
+  "step": "Fertig",
+  "last_trained_month": "2026-04",
+  "winner": "xgboost",
+  "models": [{ "model_id": "...", "accuracy": 0.677, "roc_auc": 0.737, ... }]
+}
+```
+
+#### `data/models/active_model.json` (neu)
+
+Zeigt auf das aktuell beste Modell. Wird von `MLPredictor` gelesen um
+das richtige `.joblib`-File zu laden. Beispiel:
+```json
+{
+  "model_id": "xgboost",
+  "model_name": "XGBoost",
+  "accuracy": 0.710,
+  "roc_auc": 0.751,
+  "trained_at": "2026-04-25T12:00:00"
+}
+```
+
+#### Modell-Dateistruktur
+
+```
+data/models/
+  active_model.json              ← aktives Modell (Pointer)
+  pipeline_status.json           ← Pipeline-Zustand + Modell-Vergleich
+  logistic_regression.joblib
+  logistic_regression_metrics.json
+  random_forest.joblib
+  random_forest_metrics.json
+  xgboost.joblib
+  xgboost_metrics.json
+  mlp.joblib
+  mlp_metrics.json
+  nba_predictor.joblib           ← Legacy-Copy des besten Modells
+```
+
+#### Neue API-Endpunkte (`web/server.py`)
+
+| Endpunkt | Methode | Beschreibung |
+|----------|---------|--------------|
+| `/api/pipeline/status` | GET | Status + aktives Modell + Modellvergleich |
+| `/api/pipeline/trigger` | POST | Manuelles Retraining auslösen |
+| `/api/pipeline/models` | GET | Metriken aller trainierten Modelle |
+
+#### Monatlicher Scheduler (`web/server.py`)
+
+Hintergrund-Thread `_monthly_scheduler` startet mit dem Server und prüft
+**stündlich** ob `pipeline.should_retrain()` True ist. Wenn ein neuer Monat
+begonnen hat und kein Training läuft, startet die Pipeline automatisch:
+
+```python
+threading.Thread(target=_monthly_scheduler, daemon=True).start()
+```
+
+Während des Trainings bleibt das alte Modell über `active_model.json` aktiv.
+Nach Abschluss invalidiert der Server den `MLPredictor`-Cache,
+sodass die nächste Vorhersage automatisch das neue Modell lädt.
+
+#### Pipeline-Status-Widget im Frontend
+
+Neues UI-Element im KI-Tab (`page-predict`):
+
+- **Läuft:** Spinner + aktueller Schritt + „Altes Modell aktiv bis Abschluss"
+- **Abgeschlossen:** Aktives Modell (Name, Accuracy, ROC-AUC, Datum) + horizontaler Balkenvergleich aller 4 Modelle
+- **„↺ Neu trainieren"-Button:** Löst manuell `POST /api/pipeline/trigger` aus
+- **Auto-Refresh:** Alle 3 Sekunden während die Pipeline läuft
+
+### Geändert
+
+#### `src/ml/model_trainer.py` (vollständig neu geschrieben)
+
+| Methode | Änderung |
+|---------|----------|
+| `train_all()` | **Neu:** trainiert alle 4 Modelle, speichert jedes einzeln, setzt `active_model.json` |
+| `train()` | **Abwärtskompatibel:** ruft `train_all()` auf, gibt bestes Modell zurück |
+| `load_model(model_id)` | Lädt ein spezifisches Modell (None = aktives Modell) |
+| `load_all_metrics()` | **Neu:** Metriken aller trainierten Modelle |
+| `get_active_model_info()` | **Neu:** liest `active_model.json` |
+| `_save_single_model()` | Speichert `<model_id>.joblib` + `<model_id>_metrics.json` |
+| `_update_active_model()` | Schreibt `active_model.json` + Legacy-Copy `nba_predictor.joblib` |
+| `_extract_feature_importance()` | Unterstützt jetzt: `coef_` (LogReg), `feature_importances_` (RF/XGB), kein Import (MLP) |
+
+Feature-Importance-Extraktion je Modelltyp:
+```
+LogReg  → coef_             (absolute Koeffizienten)
+RF/XGB  → feature_importances_  (Gini / Gain)
+MLP     → keine (gibt [] zurück)
+```
+
+#### `src/ml/ml_predictor.py`
+
+- **`_get_active_model_path()`** (neu): liest `active_model.json`, Fallback auf Legacy `nba_predictor.joblib`
+- **`_load_model()`**: Cache-Invalidierung wenn `active_model.json` auf neues Modell zeigt
+- **`is_model_available()`**: prüft über `_get_active_model_path()` statt Hardcode
+- **`get_active_model_info()`** (neu): gibt `active_model.json`-Inhalt zurück
+- Neues Feld `_loaded_model_path` für mtime-basierte Invalidierung
+
+### Neue CSS-Klassen (`web/static/style.css`)
+
+| Klasse | Beschreibung |
+|--------|--------------|
+| `.pipeline-running-banner` | Orange Banner während Training |
+| `.pipeline-info-bar` | Aktives-Modell-Zeile mit Button |
+| `.pipeline-models` | Container für Modell-Vergleich |
+| `.pipeline-model-row` | Einzelne Modellzeile (Name + Balken + Stats) |
+| `.pipeline-model-winner` | Grüne Hervorhebung des besten Modells |
+
+---
+
+## [1.3.0] – Betting entfernt, Train/Inference-Fix & Advanced Stats
+
+Zwei Themenkomplexe: (1) Das Betting-System (SQLite-Tracker, Resolver,
+Tests) wurde vollständig entfernt und durch eine reine KI-vs-Quoten-Ansicht
+ersetzt. (2) Kritische Bugs in der ML-Pipeline behoben: Train/Inference-Mismatch
+für `last_5/10_win_rate`, toter Code in allen `src/ml/`-Dateien entfernt,
+`per_mode_simple`-API-Fehler gefixt. Modell mit 5 Saisons neu trainiert.
+
+### Entfernt – Betting-System (~1.060 Zeilen)
+
+Das Betting-System wurde auf den Kern reduziert: **Siegwahrscheinlichkeit
+vs. Buchmacher-Quoten** bleibt im Compare-Tab erhalten. Alle Tracking-,
+Speicher- und Auflösungs-Funktionalitäten wurden entfernt.
+
+| Datei | Aktion |
+|-------|--------|
+| `src/betting/tracker.py` | Gelöscht (SQLite-Tracker, 315 Zeilen) |
+| `src/betting/resolver.py` | Gelöscht (Bet-Resolver, 156 Zeilen) |
+| `scripts/resolve_bets.py` | Gelöscht (Cron-Skript, 55 Zeilen) |
+| `tests/test_tracker.py` | Gelöscht (287 Zeilen) |
+| `src/betting/__init__.py` | Geleert |
+| `main.py` | `bets`-Subkommando und `handle_bets()` entfernt |
+| `web/server.py` | 7 Bet-Routen entfernt (`GET/POST /api/bets`, etc.) |
+| `web/static/index.html` | Wetten-Nav-Button und Wetten-Seite entfernt |
+| `web/static/app.js` | `loadBetsDashboard`, `placeBetFromCompare` u.a. (~160 Zeilen) entfernt |
+| `web/static/style.css` | Tote Bet-Card/Bets-Grid-CSS entfernt (~60 Zeilen) |
+
+Erhalten bleibt der **Quoten-Tab** (`/api/compare`, `src/ml/comparison.py`)
+mit EV-, Edge- und Wahrscheinlichkeitsvergleich.
+
+### Behoben
+
+#### Train/Inference-Mismatch: `last_5_win_rate` / `last_10_win_rate`
+
+**Problem:** Beim Training lieferte `_CumulativeTeamTracker` reale Werte
+(0.0–1.0) für `last_5_win_rate` und `last_10_win_rate`. Bei der Vorhersage
+las `_build_feature_vector()` diese Werte aus `AdvancedTeamStats`, wo sie
+immer **0.0** waren (Felder wurden nie aus der NBA.com-API befüllt).
+
+**Betroffene Features:** `home_last_5_win_rate`, `home_last_10_win_rate`,
+`away_last_5_win_rate`, `away_last_10_win_rate`, `diff_last_5` – fünf
+von 45 Features waren bei jeder Vorhersage auf 0.0 fixiert.
+
+**Fix:** `ml_predictor.py` liest nun direkt aus dem `Team`-Objekt:
+```python
+# Vorher (immer 0.0!):
+home_adv.last_5_win_rate, home_adv.last_10_win_rate
+# Nachher:
+home.last_5_win_rate, home.last_10_win_rate
+```
+
+#### `nba_api` Kompatibilitätsfehler (`per_mode_simple`)
+
+```
+TypeError: LeagueDashTeamStats.__init__() got an unexpected keyword argument 'per_mode_simple'
+```
+
+Parameter `per_mode_simple="PerGame"` in `nba_stats_client.py` aus dem
+`LeagueDashTeamStats`-Aufruf entfernt. Nicht unterstützt von der
+installierten nba_api-Version; Advanced-Stats-Metriken benötigen ihn nicht.
+
+#### Fehlerhafte Kommentare in `team.py`
+
+Kommentar zum `fatigue_score`-Property war falsch dokumentiert:
+```python
+# Alt (falsch): 1 → 0.5, 2 → 0.25
+# Neu (korrekt): 1 → 0.45, 2 → 0.15
+```
+
+### Entfernt – Toter Code in `src/ml/`
+
+| Datei | Entfernung |
+|-------|-----------|
+| `data_collector.py` | `_find_team()` (nie aufgerufen); `team_id`-Parameter aus `_CumulativeTeamTracker.__init__` |
+| `ml_predictor.py` | `probability_for_team()` (nie aufgerufen); modulweiter `logger`; `odds`-Parameter aus `_build_feature_vector()` |
+| `comparison.py` | Modulweiter `logger` (ungenutzt) |
+| `model_trainer.py` | Modulweiter `logger` (ungenutzt) |
+| `nba_stats_client.py` | `last_5_win_rate`, `last_10_win_rate`, `last_5_point_diff` aus `AdvancedTeamStats` (nie befüllt) |
+| `tests/test_ml_system.py` | `test_score_difference_calculation` (Property zuvor entfernt); odds-Argumente aus Feature-Vektor-Tests |
+| `tests/test_game.py` | `test_score_difference_calculation` entfernt |
+
+### Hinzugefügt
+
+- **`generate_chart.py`**: Erstellt `docs/project_overview.png` – horizontales
+  Balkendiagramm und Kuchendiagramm der Codegröße pro Komponente (matplotlib,
+  Dark Theme).
+
+### Modell-Neutraining
+
+Nach dem Train/Inference-Mismatch-Fix mit 5 Saisons neu trainiert:
+
+| Metrik | v0.8.0 | v1.3.0 | Δ |
+|--------|--------|--------|---|
+| Trainingsdaten | 4.504 Samples | 4.219 Samples | −285 |
+| Saisons | 2021, 2023, 2024, 2025 | 2020–2024 | – |
+| Accuracy (Test) | 65.0 % | **67.7 %** | **+2.7 pp** |
+| ROC-AUC | 0.699 | **0.737** | **+0.038** |
+| Top-Feature #1 | `home_elo` | `home_net_rating` | Feature-Shift |
+
+Der Shift von Elo zu Net-Rating als Top-Prädiktor ist auf die jetzt korrekten
+`last_5/10_win_rate`-Werte zurückzuführen, die die Form-Features stärker
+gewichten.
+
+---
+
 ## [1.2.0] – Regelmodell im Quoten-Tab & Circuit-Breaker-Fix
 
 ### Hinzugefügt
