@@ -165,7 +165,7 @@ def handle_train(config, args):
         print("Verwendung: python main.py train [collect|model|all|metrics]")
 
 
-def handle_bets(args):
+def handle_bets(args, config):
     from src.betting.tracker import BettingTracker
     from src.betting.resolver import BetResolver
 
@@ -208,9 +208,6 @@ def handle_bets(args):
         print(f"{'='*40}\n")
 
     elif cmd == "resolve":
-        config = Config()
-        for warning in config.validate():
-            print(f"[WARNUNG] {warning}")
         resolver = BetResolver(config)
         result = resolver.resolve_all_open()
         print(f"\n  Aufgelöst: {result['resolved']} ({result['won']}W / {result['lost']}L)")
@@ -268,7 +265,7 @@ def main() -> int:
             "ml-predict": lambda: handle_ml_predict(nba_client, odds_client, ml_predictor, args.home_team, args.away_team),
             "train":      lambda: handle_train(config, args),
             "compare":    lambda: handle_compare(config, getattr(args, "home", None), getattr(args, "away", None)),
-            "bets":       lambda: handle_bets(args),
+            "bets":       lambda: handle_bets(args, config),
         }
 
         handler = dispatch.get(args.command)
