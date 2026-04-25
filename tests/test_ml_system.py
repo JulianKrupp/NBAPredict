@@ -260,19 +260,10 @@ class TestCumulativeTeamTracker:
         # Neuester Sieg hat höchstes Gewicht → Rating > 0.2 (= 1/5)
         assert tracker.form_rating > 0.2
 
-    def test_advanced_stats_computation(self):
-        """Advanced Stats werden aus kumulativen Basisdaten berechnet."""
+    def test_advanced_stats_not_on_tracker(self):
+        """_CumulativeTeamTracker hat keine compute_advanced_stats mehr."""
         tracker = _CumulativeTeamTracker("Test Team")
-        tracker.update(115, 108, True, True, "2024-10-22")
-        adv = tracker.compute_advanced_stats()
-        assert "offensive_rating" in adv
-        assert "defensive_rating" in adv
-        assert "net_rating" in adv
-        assert "pace" in adv
-        assert "true_shooting" in adv
-        assert adv["net_rating"] == pytest.approx(
-            adv["offensive_rating"] - adv["defensive_rating"]
-        )
+        assert not hasattr(tracker, "compute_advanced_stats")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -328,49 +319,71 @@ class TestNBAModelTrainer:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+def _make_adv_stats(name: str) -> AdvancedTeamStats:
+    return AdvancedTeamStats(
+        team_id=1, team_name=name,
+        offensive_rating=112.0, defensive_rating=108.0,
+        net_rating=4.0, pace=98.0, true_shooting_pct=0.57,
+    )
+
+
+def _predictor_with_cache(config, *team_names) -> MLPredictor:
+    """Erstellt MLPredictor mit vorbeladenem Advanced-Stats-Cache."""
+    predictor = MLPredictor(config)
+    predictor._adv_stats_cache = {name: _make_adv_stats(name) for name in team_names}
+    predictor._elo_cache = {name: 1500.0 for name in team_names}
+    return predictor
+
+
 class TestMLPredictor:
 
     def test_predict_returns_ml_prediction_result(self, mock_config):
-        predictor = MLPredictor(mock_config)
+        predictor = _predictor_with_cache(mock_config, "Lakers", "Celtics")
         home = make_team("Lakers", wins=50, losses=20)
         away = make_team("Celtics", wins=45, losses=25)
         result = predictor.predict(home, away)
         assert isinstance(result, MLPredictionResult)
 
     def test_predict_winner_is_home_or_away(self, mock_config):
-        predictor = MLPredictor(mock_config)
+        predictor = _predictor_with_cache(mock_config, "A", "B")
         result = predictor.predict(make_team("A"), make_team("B"))
         assert result.ml_predicted_winner in ("home", "away")
 
     def test_predict_probability_in_valid_range(self, mock_config):
-        predictor = MLPredictor(mock_config)
+        predictor = _predictor_with_cache(mock_config, "A", "B")
         result = predictor.predict(make_team("A"), make_team("B"))
         assert 0.0 <= result.ml_home_win_probability <= 1.0
 
     def test_predict_with_odds_sets_odds_probability(self, mock_config):
-        predictor = MLPredictor(mock_config)
+        predictor = _predictor_with_cache(mock_config, "A", "B")
         odds = GameOdds(home_team="A", away_team="B", odds_home=1.80, odds_away=2.10)
         result = predictor.predict(make_team("A"), make_team("B"), odds=odds)
         assert result.odds_home_win_probability is not None
         assert 0.0 < result.odds_home_win_probability < 1.0
 
     def test_consensus_agreement_count_is_1_to_2(self, mock_config):
-        predictor = MLPredictor(mock_config)
+        predictor = _predictor_with_cache(mock_config, "A", "B")
         result = predictor.predict(make_team("A"), make_team("B"))
         assert 1 <= result.consensus_agreement_count <= 2
 
     def test_build_feature_vector_has_correct_length(self, mock_config):
         """Feature-Vektor hat exakt 45 Einträge (v4 ohne odds)."""
-        predictor = MLPredictor(mock_config)
-        predictor._elo_cache = {"A": 1550.0, "B": 1480.0}
+        predictor = _predictor_with_cache(mock_config, "A", "B")
         home = make_team("A")
         away = make_team("B")
         home_adv = predictor._get_advanced_stats(home)
         away_adv = predictor._get_advanced_stats(away)
-        vector = predictor._build_feature_vector(home, away, home_adv, away_adv, None)
+        vector = predictor._build_feature_vector(home, away, home_adv, away_adv)
         expected_length = len(TrainingSample.get_feature_columns())
         assert len(vector) == expected_length
-        assert expected_length == 45  # v4: 45 statt 46
+        assert expected_length == 45
+
+    def test_get_advanced_stats_raises_if_team_not_found(self, mock_config):
+        """RuntimeError wenn Team nicht im Cache."""
+        predictor = MLPredictor(mock_config)
+        predictor._adv_stats_cache = {}
+        with pytest.raises(RuntimeError, match="Advanced Stats"):
+            predictor._get_advanced_stats(make_team("Unbekannt"))
 
 
 # ══════════════════════════════════════════════════════════════════════════════

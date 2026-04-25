@@ -47,6 +47,7 @@ METADATA_PATH = Path("data/training/metadata.json")
 MIN_GAMES_THRESHOLD = 10
 
 
+
 def _compute_fatigue(days_rest: int, games_last_7: int) -> float:
     """Berechnet Ermüdungswert identisch zu Team.fatigue_score.
 
@@ -172,9 +173,8 @@ class _CumulativeTeamTracker:
     Nach dem Spiel wird update() aufgerufen, um das Ergebnis einzurechnen.
     """
 
-    def __init__(self, team_name: str, team_id: int = 0) -> None:
+    def __init__(self, team_name: str) -> None:
         self.name = team_name
-        self.team_id = team_id
 
         self.wins = 0
         self.losses = 0
@@ -286,26 +286,6 @@ class _CumulativeTeamTracker:
         except (ValueError, IndexError):
             return 2
 
-    def compute_advanced_stats(self) -> dict:
-        """Berechnet Advanced Stats aus kumulativen Basisdaten."""
-        pts = self.avg_pts_scored
-        allowed = self.avg_pts_allowed
-
-        pace = max(85.0, min(115.0, 98.0 + (pts - 110.0) * 0.3))
-        off_r = (pts / pace) * 100.0
-        def_r = (allowed / pace) * 100.0
-
-        pts_factor = pts / 113.0
-        ts = max(0.45, min(0.65, 0.555 + (pts_factor - 1.0) * 0.05))
-
-        return {
-            "offensive_rating": off_r,
-            "defensive_rating": def_r,
-            "net_rating": off_r - def_r,
-            "pace": pace,
-            "true_shooting": ts,
-        }
-
     # ── Update: Nach dem Spiel aufrufen ──────────────────────────────
 
     def update(
@@ -342,8 +322,23 @@ class _CumulativeTeamTracker:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+def _lookup_advanced_stats(name: str, stats: dict) -> "AdvancedTeamStats":
+    """Sucht Advanced Stats für ein Team — exakter Match, dann Substring."""
+    if name in stats:
+        return stats[name]
+    name_lower = name.lower()
+    for key, val in stats.items():
+        if name_lower in key.lower() or key.lower() in name_lower:
+            return val
+    raise RuntimeError(
+        f"Advanced Stats für Team '{name}' nicht gefunden.\n"
+        f"Verfügbare Teams: {sorted(stats.keys())}"
+    )
+
+
 def build_samples_cumulative(
     games: list[Game],
+    advanced_stats: dict[int, dict],
     elo_per_game: dict[int, tuple[float, float]] | None = None,
     min_games: int = MIN_GAMES_THRESHOLD,
 ) -> list[dict]:
@@ -389,8 +384,9 @@ def build_samples_cumulative(
             continue
 
         # ── Features aus kumulativen Stats VOR dem Spiel ──────────────
-        h_adv = ht.compute_advanced_stats()
-        a_adv = at.compute_advanced_stats()
+        season_adv = advanced_stats[season]
+        h_adv = _lookup_advanced_stats(h_name, season_adv)
+        a_adv = _lookup_advanced_stats(a_name, season_adv)
         h_rest = ht.days_rest_before(game.date)
         a_rest = at.days_rest_before(game.date)
         h_g7 = ht.games_last_7_days_before(game.date)
@@ -419,11 +415,11 @@ def build_samples_cumulative(
             home_avg_pts_allowed=ht.avg_pts_allowed,
             home_home_win_rate=ht.home_win_rate,
             home_away_win_rate=ht.away_win_rate,
-            home_offensive_rating=h_adv["offensive_rating"],
-            home_defensive_rating=h_adv["defensive_rating"],
-            home_net_rating=h_adv["net_rating"],
-            home_pace=h_adv["pace"],
-            home_true_shooting=h_adv["true_shooting"],
+            home_offensive_rating=h_adv.offensive_rating,
+            home_defensive_rating=h_adv.defensive_rating,
+            home_net_rating=h_adv.net_rating,
+            home_pace=h_adv.pace,
+            home_true_shooting=h_adv.true_shooting_pct,
             home_last_5_win_rate=ht.last_5_win_rate,
             home_last_10_win_rate=ht.last_10_win_rate,
             home_days_rest=h_rest,
@@ -439,11 +435,11 @@ def build_samples_cumulative(
             away_avg_pts_allowed=at.avg_pts_allowed,
             away_home_win_rate=at.home_win_rate,
             away_away_win_rate=at.away_win_rate,
-            away_offensive_rating=a_adv["offensive_rating"],
-            away_defensive_rating=a_adv["defensive_rating"],
-            away_net_rating=a_adv["net_rating"],
-            away_pace=a_adv["pace"],
-            away_true_shooting=a_adv["true_shooting"],
+            away_offensive_rating=a_adv.offensive_rating,
+            away_defensive_rating=a_adv.defensive_rating,
+            away_net_rating=a_adv.net_rating,
+            away_pace=a_adv.pace,
+            away_true_shooting=a_adv.true_shooting_pct,
             away_last_5_win_rate=at.last_5_win_rate,
             away_last_10_win_rate=at.last_10_win_rate,
             away_days_rest=a_rest,
@@ -455,7 +451,7 @@ def build_samples_cumulative(
             # ── Differenz (6 Features) ────────────────────────────────
             diff_win_rate=ht.win_rate - at.win_rate,
             diff_point_diff=ht.point_diff - at.point_diff,
-            diff_net_rating=h_adv["net_rating"] - a_adv["net_rating"],
+            diff_net_rating=h_adv.net_rating - a_adv.net_rating,
             diff_last_5=ht.last_5_win_rate - at.last_5_win_rate,
             diff_streak=ht.current_streak - at.current_streak,
             diff_fatigue=h_fat - a_fat,
@@ -527,14 +523,28 @@ class TrainingDataCollector:
             return 0
         print(f"        → {len(all_games)} Spiele geladen")
 
-        # Schritt 2: Elo-Ratings berechnen
-        print("\n  [2/3] Berechne Elo-Ratings...")
+        # Schritt 2: Echte Advanced Stats pro Saison laden
+        print("\n  [2/4] Lade Advanced Stats (stats.nba.com)...")
+        advanced_stats: dict[int, dict] = {}
+        for season in seasons:
+            stats = self.stats_client.get_all_team_advanced_stats(season)
+            if not stats:
+                raise RuntimeError(
+                    f"Echte Advanced Stats für Saison {season} nicht verfügbar.\n"
+                    "Stelle sicher dass nba_api installiert ist: pip install nba_api\n"
+                    "und stats.nba.com erreichbar ist."
+                )
+            advanced_stats[season] = stats
+            print(f"        → Saison {season}: {len(stats)} Teams")
+
+        # Schritt 3: Elo-Ratings berechnen
+        print("\n  [3/4] Berechne Elo-Ratings...")
         elo_per_game = calculate_elo_per_game(all_games)
         print(f"        → Elo für {len(elo_per_game)} Spiele berechnet")
 
-        # Schritt 3: Kumulative Samples erstellen (KEIN Saison-Endstand!)
-        print("\n  [3/3] Erstelle kumulative Trainingssamples...")
-        sample_dicts = build_samples_cumulative(all_games, elo_per_game)
+        # Schritt 4: Kumulative Samples erstellen
+        print("\n  [4/4] Erstelle kumulative Trainingssamples...")
+        sample_dicts = build_samples_cumulative(all_games, advanced_stats, elo_per_game)
         print(f"        → {len(sample_dicts)} Samples erstellt")
 
         if not sample_dicts:
@@ -663,17 +673,6 @@ class TrainingDataCollector:
             self.logger.info("Saison %d: %d Spiele geladen", season, len(games))
 
         return all_games[:max_games]
-
-    def _find_team(
-        self, team_name: str, season_stats: dict[str, Team]
-    ) -> Team | None:
-        if team_name in season_stats:
-            return season_stats[team_name]
-        name_lower = team_name.lower()
-        for key, team in season_stats.items():
-            if name_lower in key.lower() or key.lower() in name_lower:
-                return team
-        return None
 
     def _save_to_csv(self, samples: list[TrainingSample], path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

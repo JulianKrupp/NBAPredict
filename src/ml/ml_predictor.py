@@ -20,8 +20,6 @@ from src.ml.elo import calculate_elo_ratings
 from src.ml.model_trainer import NBAModelTrainer, MODEL_PATH
 from src.utils.config import Config
 
-logger = logging.getLogger(__name__)
-
 
 @dataclass
 class MLPredictionResult:
@@ -46,11 +44,6 @@ class MLPredictionResult:
     def all_agree(self) -> bool:
         return self.consensus_agreement_count >= 2
 
-    def probability_for_team(self, team_type: str) -> float:
-        if team_type == "home":
-            return self.ml_home_win_probability
-        return 1.0 - self.ml_home_win_probability
-
 
 class MLPredictor:
     """ML-Modell Vorhersage auf Basis von Logistic Regression."""
@@ -61,6 +54,7 @@ class MLPredictor:
         self.trainer = NBAModelTrainer()
         self._model: Any | None = None
         self._elo_cache: dict[str, float] | None = None
+        self._adv_stats_cache: dict[str, AdvancedTeamStats] | None = None
         self.logger = logging.getLogger(__name__)
 
     # ── Öffentliche Methoden ──────────────────────────────────────────────
@@ -75,7 +69,7 @@ class MLPredictor:
         home_adv = self._get_advanced_stats(home_team)
         away_adv = self._get_advanced_stats(away_team)
 
-        ml_home_prob = self._ml_predict(home_team, away_team, home_adv, away_adv, odds)
+        ml_home_prob = self._ml_predict(home_team, away_team, home_adv, away_adv)
         ml_winner = "home" if ml_home_prob >= 0.5 else "away"
         ml_confidence = self._confidence_label(
             ml_home_prob if ml_winner == "home" else 1.0 - ml_home_prob
@@ -137,37 +131,28 @@ class MLPredictor:
         self,
         home_team: Team, away_team: Team,
         home_adv: AdvancedTeamStats, away_adv: AdvancedTeamStats,
-        odds: GameOdds | None,
     ) -> float:
-        """ML-Vorhersage. Fällt auf Win-Rate-Schätzung zurück wenn kein Modell da."""
+        """ML-Vorhersage. Wirft RuntimeError wenn kein Modell geladen werden kann."""
         model = self._load_model()
 
         if model is None:
-            self.logger.info("Kein ML-Modell – nutze Win-Rate-Schätzung.")
-            # Einfache Schätzung: Heimvorteil + Win-Rate-Differenz
-            base = 0.58  # Heimvorteil-Baseline
-            diff = (home_team.win_rate - away_team.win_rate) * 0.3
-            return float(np.clip(base + diff, 0.1, 0.9))
+            raise RuntimeError(
+                "Kein ML-Modell vorhanden.\n"
+                "Erst 'python main.py train all' ausführen."
+            )
 
         feature_vector = self._build_feature_vector(
-            home_team, away_team, home_adv, away_adv, odds,
+            home_team, away_team, home_adv, away_adv,
         )
 
-        try:
-            X = np.array([feature_vector], dtype=float)
-            prob = model.predict_proba(X)[0][1]
-            return float(np.clip(prob, 0.05, 0.95))
-        except Exception as exc:
-            self.logger.error("ML-Vorhersagefehler: %s", exc)
-            base = 0.58
-            diff = (home_team.win_rate - away_team.win_rate) * 0.3
-            return float(np.clip(base + diff, 0.1, 0.9))
+        X = np.array([feature_vector], dtype=float)
+        prob = model.predict_proba(X)[0][1]
+        return float(np.clip(prob, 0.05, 0.95))
 
     def _build_feature_vector(
         self,
         home: Team, away: Team,
         home_adv: AdvancedTeamStats, away_adv: AdvancedTeamStats,
-        odds: GameOdds | None,
     ) -> list[float]:
         """
         Erstellt den Feature-Vektor für das ML-Modell (45 Features).
@@ -189,8 +174,8 @@ class MLPredictor:
             home_adv.net_rating,
             home_adv.pace,
             home_adv.true_shooting_pct,
-            home_adv.last_5_win_rate,
-            home_adv.last_10_win_rate,
+            home.last_5_win_rate,
+            home.last_10_win_rate,
             home_adv.days_since_last_game,
             home.current_streak,
             home.fatigue_score,
@@ -209,8 +194,8 @@ class MLPredictor:
             away_adv.net_rating,
             away_adv.pace,
             away_adv.true_shooting_pct,
-            away_adv.last_5_win_rate,
-            away_adv.last_10_win_rate,
+            away.last_5_win_rate,
+            away.last_10_win_rate,
             away_adv.days_since_last_game,
             away.current_streak,
             away.fatigue_score,
@@ -221,7 +206,7 @@ class MLPredictor:
             home.win_rate - away.win_rate,
             home.point_differential - away.point_differential,
             home_adv.net_rating - away_adv.net_rating,
-            home_adv.last_5_win_rate - away_adv.last_5_win_rate,
+            home.last_5_win_rate - away.last_5_win_rate,
             home.current_streak - away.current_streak,
             home.fatigue_score - away.fatigue_score,
 
@@ -250,15 +235,37 @@ class MLPredictor:
             return {}
 
     def _get_advanced_stats(self, team: Team) -> AdvancedTeamStats:
-        return self.stats_client.build_advanced_stats_from_basic(
-            team_id=team.team_id,
-            team_name=team.name,
-            wins=team.wins,
-            losses=team.losses,
-            avg_pts_scored=team.avg_points_scored,
-            avg_pts_allowed=team.avg_points_allowed,
-            recent_game_results=team.recent_game_results if team.has_recent_form_data else None,
-        )
+        if self._adv_stats_cache is None:
+            self._adv_stats_cache = self._load_advanced_stats()
+        adv = self._adv_stats_cache.get(team.name)
+        if adv is None:
+            # Fuzzy-Match: Substring-Suche
+            name_lower = team.name.lower()
+            for key, val in self._adv_stats_cache.items():
+                if name_lower in key.lower() or key.lower() in name_lower:
+                    adv = val
+                    break
+        if adv is None:
+            raise RuntimeError(
+                f"Advanced Stats für Team '{team.name}' nicht verfügbar.\n"
+                "Stelle sicher dass nba_api installiert ist: pip install nba_api\n"
+                "und stats.nba.com erreichbar ist."
+            )
+        adv.days_since_last_game = team.days_rest
+        return adv
+
+    def _load_advanced_stats(self) -> dict[str, AdvancedTeamStats]:
+        from datetime import date
+        today = date.today()
+        season = today.year - 1 if today.month < 10 else today.year
+        stats = self.stats_client.get_all_team_advanced_stats(season)
+        if not stats:
+            raise RuntimeError(
+                "Echte Advanced Stats nicht verfügbar.\n"
+                "Stelle sicher dass nba_api installiert ist: pip install nba_api\n"
+                "und stats.nba.com erreichbar ist."
+            )
+        return stats
 
     def _get_feature_contributions(self) -> dict[str, float]:
         """Extrahiert Top-Feature-Importances aus dem Modell."""
