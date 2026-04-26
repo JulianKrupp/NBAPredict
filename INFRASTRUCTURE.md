@@ -126,7 +126,7 @@ COPY main.py   .
 Kopiert den Quellcode. Nur die nötigen Ordner – keine Tests, keine Docs.
 
 ```dockerfile
-RUN mkdir -p logs data/betting data/models data/training_data data/cache
+RUN mkdir -p logs data/models data/training_data data/cache
 ```
 Legt Verzeichnisse an, die das Programm erwartet. Ohne `mkdir` würde
 der Server beim Starten abstürzen, weil er `logs/` nicht schreiben kann.
