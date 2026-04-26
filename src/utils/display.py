@@ -1,5 +1,5 @@
 """
-Ausgabe-Hilfsfunktionen für den NBA Tracker (Terminal-Formatierung).
+Ausgabe-Hilfsfunktionen für den NBA Predict (Terminal-Formatierung).
 """
 
 from __future__ import annotations

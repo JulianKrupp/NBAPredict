@@ -1,4 +1,4 @@
-# NBA Tracker – Docker Compose
+# NBA Predict – Docker Compose
 # Starten mit: docker compose up
 # Stoppen mit:  docker compose down
 
@@ -7,7 +7,7 @@ services:
   # ── Web-Applikation ──────────────────────────────────────────────────────
   web:
     build: .
-    container_name: nba-tracker-web
+    container_name: nba-predict-web
     ports:
       - "5000:5000"
     volumes:

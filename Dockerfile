@@ -1,4 +1,4 @@
-# ── NBA Tracker – Docker Image ────────────────────────────────────────────────
+# ── NBA Predict – Docker Image ────────────────────────────────────────────────
 # Multi-Stage-Build: Builder installiert Abhängigkeiten, Runtime bleibt schlank.
 
 # ── Stage 1: Abhängigkeiten installieren ─────────────────────────────────────

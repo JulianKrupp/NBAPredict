@@ -1,5 +1,5 @@
 """
-NBA Tracker – Einstiegspunkt
+NBA Predict – Einstiegspunkt
 
 Subkommandos:
   live, scores, standings, team
@@ -25,7 +25,7 @@ from src.ml.comparison import OddsVsMLComparison
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="NBA Tracker – Ergebnisse, KI-Vorhersagen & Wettquoten",
+        description="NBA Predict – Ergebnisse, KI-Vorhersagen & Wettquoten",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command")

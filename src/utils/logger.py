@@ -1,5 +1,5 @@
 """
-Logger-Konfiguration für den NBA Tracker.
+Logger-Konfiguration für den NBA Predict.
 
 setup_logger() wird einmal beim Programmstart aufgerufen und konfiguriert das zentrale Python-Logging-System.
 Danach kann jedes Modul mit logging.getLogger(__name__) einen eigenen Logger holen — alle landen automatisch beim

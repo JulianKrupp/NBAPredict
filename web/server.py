@@ -1,5 +1,5 @@
 """
-NBA Tracker – Flask Web-Server
+NBA Predict – Flask Web-Server
 
 Starten mit:  python web/server.py
 Aufruf im Browser: http://localhost:5000
@@ -370,7 +370,7 @@ if __name__ == "__main__":
     threading.Thread(target=_monthly_scheduler, daemon=True).start()
 
     print("\n" + "="*55)
-    print("  🏀 NBA Tracker Web-Server")
+    print("  🏀 NBA Predict Web-Server")
     print("  http://localhost:5000")
     print("  ML-Pipeline: automatisches Monats-Retraining aktiv")
     print("="*55 + "\n")

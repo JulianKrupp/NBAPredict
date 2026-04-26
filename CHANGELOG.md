@@ -1,6 +1,6 @@
 # Changelog
 
-Alle relevanten Änderungen am NBA Tracker werden in dieser Datei dokumentiert.
+Alle relevanten Änderungen am NBA Predict werden in dieser Datei dokumentiert.
 Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ---
