@@ -1,18 +1,22 @@
-// ══════════════════════════════════════════════════════
-//  GLOBALER STATE
-// ══════════════════════════════════════════════════════
+// ── Globaler State ───────────────────────────────────────────────────────────
 const API = '';
-let currentDate = new Date().toISOString().slice(0, 10);
 let teamNames = [];
 
-// Auto-Refresh State
+// toISOString() liefert UTC – nach Mitternacht MEZ wäre das gestern.
+// localDateString() verwendet die lokale Zeitzone des Browsers.
+function localDateString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+let currentDate = localDateString();
+
+// Auto-Refresh-Zustand
 let _autoRefreshTimer = null;
 let _lastScoresLoad   = null;
 let _nextRefreshAt    = null;
 
-// ══════════════════════════════════════════════════════
-//  NAVIGATION
-// ══════════════════════════════════════════════════════
+// ── Navigation ───────────────────────────────────────────────────────────────
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
@@ -27,9 +31,7 @@ function showPage(id) {
   if (loaders[id]) loaders[id]();
 }
 
-// ══════════════════════════════════════════════════════
-//  FETCH HELPER
-// ══════════════════════════════════════════════════════
+// ── Fetch-Hilfsfunktionen ────────────────────────────────────────────────────
 let _apiOffline = false;
 
 function _setOfflineBanner(offline) {
@@ -70,9 +72,7 @@ function loadingHtml(text = 'Lade Daten...') {
   return `<div class="loading"><div class="spinner"></div>${text}</div>`;
 }
 
-// ══════════════════════════════════════════════════════
-//  AUTO-REFRESH SYSTEM
-// ══════════════════════════════════════════════════════
+// ── Auto-Refresh ─────────────────────────────────────────────────────────────
 
 const GAME_HOURS = { start: 1, end: 7 };
 const SCORES_REFRESH_MS = 5 * 60 * 1000;
@@ -82,6 +82,7 @@ function isGameTime() {
   return h >= GAME_HOURS.start && h < GAME_HOURS.end;
 }
 
+// Millisekunden bis zum nächsten Spielzeitfenster (nächster Tag, falls bereits vorbei)
 function msUntilNextGameTime() {
   const next = new Date();
   next.setHours(GAME_HOURS.start, 0, 0, 0);
@@ -117,9 +118,7 @@ function updateRefreshStatus() {
   el.textContent = `↻ ${lastStr} · nächste in ${nextMin} min`;
 }
 
-// ══════════════════════════════════════════════════════
-//  STANDINGS
-// ══════════════════════════════════════════════════════
+// ── Standings ────────────────────────────────────────────────────────────────
 async function loadStandings() {
   const el = document.getElementById('standings-content');
   el.innerHTML = loadingHtml('Lade Standings...');
@@ -163,12 +162,10 @@ async function loadStandings() {
   }
 }
 
-// ══════════════════════════════════════════════════════
-//  SCORES
-// ══════════════════════════════════════════════════════
+// ── Scores ───────────────────────────────────────────────────────────────────
 function initScores() {
   document.getElementById('date-display').textContent = formatDate(currentDate);
-  document.getElementById('scores-sub').textContent = currentDate === new Date().toISOString().slice(0, 10) ? 'Heute' : currentDate;
+  document.getElementById('scores-sub').textContent = currentDate === localDateString() ? 'Heute' : currentDate;
 }
 
 function changeDate(delta) {
@@ -263,7 +260,8 @@ function abbr(name) {
     'Portland Trail Blazers': 'POR', 'Memphis Grizzlies': 'MEM', 'New Orleans Pelicans': 'NOP',
     'Sacramento Kings': 'SAC', 'Houston Rockets': 'HOU',
   };
-  return map[name] || name.split(' ').map(w => w[0]).join('').slice(0, 3).toUpperCase();
+  // Leerzeichen-Splitting kann leere Strings erzeugen → vorher filtern
+  return map[name] || name.split(' ').filter(w => w.length).map(w => w[0]).join('').slice(0, 3).toUpperCase();
 }
 
 function quickPredict(home, away) {
@@ -273,9 +271,7 @@ function quickPredict(home, away) {
   setTimeout(() => runPrediction(), 100);
 }
 
-// ══════════════════════════════════════════════════════
-//  ML PIPELINE STATUS
-// ══════════════════════════════════════════════════════
+// ── ML-Pipeline-Status ───────────────────────────────────────────────────────
 let _pipelineRefreshTimer = null;
 
 async function loadPipelineStatus() {
@@ -286,8 +282,8 @@ async function loadPipelineStatus() {
     const s = await apiFetch('/api/pipeline/status');
     renderPipelineStatus(s, widget);
 
-    // Immer pollen – 3 s bei laufender Pipeline, 30 s im Ruhezustand.
-    // So sehen auch andere Browser-Tabs / Nutzer Änderungen zeitnah.
+    // Laufende Pipeline: alle 3 s abfragen. Ruhezustand: alle 30 s.
+    // So werden Statusänderungen auch in anderen Browser-Tabs zeitnah sichtbar.
     clearInterval(_pipelineRefreshTimer);
     _pipelineRefreshTimer = setInterval(loadPipelineStatus, s.running ? 3000 : 30000);
   } catch (e) {
@@ -387,8 +383,7 @@ function renderPipelineStatus(s, widget) {
 }
 
 async function triggerPipeline() {
-  // Alle Trigger-Buttons sofort deaktivieren und Spinner zeigen –
-  // unabhängig davon, wie viele Tabs die Seite geöffnet haben.
+  // Alle Trigger-Buttons sofort deaktivieren – unabhängig von der Anzahl offener Tabs.
   const btns = document.querySelectorAll('.pipeline-trigger-btn');
   btns.forEach(b => {
     b.disabled = true;
@@ -405,15 +400,14 @@ async function triggerPipeline() {
     const d = await r.json();
 
     if (!r.ok && r.status !== 409) {
-      // Echter Fehler (nicht "läuft bereits") → Button wiederherstellen
+      // Echter Fehler (kein "läuft bereits") → Button wiederherstellen und Meldung zeigen
       btns.forEach(b => { b.disabled = false; b.innerHTML = b._origHtml; });
       alert(d.error || 'Pipeline konnte nicht gestartet werden.');
       return;
     }
 
-    // 200 (gestartet) oder 409 (läuft bereits von anderem Nutzer) →
-    // Sofort Running-Banner zeigen (optimistisch), bevor der Server-Thread
-    // pipeline_status.json aktualisiert hat.
+    // 200 (gestartet) oder 409 (läuft bereits) →
+    // Running-Banner optimistisch zeigen, bevor pipeline_status.json aktualisiert ist.
     const widget = document.getElementById('pipeline-status-widget');
     if (widget) renderPipelineStatus({ running: true, step: 'Starte Pipeline …' }, widget);
     clearInterval(_pipelineRefreshTimer);
@@ -424,9 +418,7 @@ async function triggerPipeline() {
   }
 }
 
-// ══════════════════════════════════════════════════════
-//  PREDICT
-// ══════════════════════════════════════════════════════
+// ── Vorhersage ───────────────────────────────────────────────────────────────
 function predInputChanged() {
   const h = document.getElementById('pred-home').value.trim();
   const a = document.getElementById('pred-away').value.trim();
@@ -557,9 +549,7 @@ function renderPrediction(d, el) {
   </div>`;
 }
 
-// ══════════════════════════════════════════════════════
-//  COMPARE (KI vs QUOTEN + EV)
-// ══════════════════════════════════════════════════════
+// ── Vergleich: KI vs. Quoten ─────────────────────────────────────────────────
 async function loadCompare() {
   const el = document.getElementById('compare-content');
   const home = document.getElementById('cmp-home').value.trim();
@@ -647,22 +637,18 @@ async function loadCompare() {
   }
 }
 
-// ══════════════════════════════════════════════════════
-//  TEAM DATALIST
-// ══════════════════════════════════════════════════════
+// ── Team-Datalist ────────────────────────────────────────────────────────────
 function updateTeamList() {
   const dl = document.getElementById('team-list');
   dl.innerHTML = teamNames.map(n => `<option value="${n}">`).join('');
 }
 
-// ══════════════════════════════════════════════════════
-//  INIT
-// ══════════════════════════════════════════════════════
+// ── Init ─────────────────────────────────────────────────────────────────────
 (async function init() {
   checkApiStatus();
-  setInterval(checkApiStatus, 30000);
+  setInterval(checkApiStatus, 30000);      // Offline-Status alle 30 s prüfen
   initScores();
   loadStandings();
   loadScores();
-  setInterval(updateRefreshStatus, 30000);
+  setInterval(updateRefreshStatus, 30000); // Zeitanzeige ("nächste in X min") aktuell halten
 })();
