@@ -1,4 +1,9 @@
+"""
+Datenmodell für ein NBA-Team mit aggregierten Saisonstatistiken.
+"""
+
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 
 
@@ -168,7 +173,7 @@ class Team:
         return f"{self.name} ({self.wins}-{self.losses})"
 
     @classmethod
-    def from_standings_response(cls, raw: dict) -> "Team":
+    def from_standings_response(cls, raw: dict) -> Team:
         """Erstellt ein Team aus einer API-Antwort (Standings-Endpoint)."""
         team_data = raw.get("team", raw)
         return cls(

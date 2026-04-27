@@ -1,15 +1,13 @@
 """
-NBA Tracker – Flask Web-Server
+NBA Predict – Flask Web-Server.
 
-Starten mit:  python web/server.py
-Aufruf im Browser: http://localhost:5000
+Starten mit:        python web/server.py
+Aufruf im Browser:  http://localhost:5000
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import sys
 import threading
 from datetime import date
@@ -25,13 +23,12 @@ from flask_cors import CORS
 from src.api.nba_api_client import NBAApiClient
 from src.api.odds_api_client import OddsApiClient
 from src.ml.comparison import OddsVsMLComparison
+from src.ml.data_collector import DEFAULT_MAX_GAMES, default_training_seasons
 from src.ml.ml_predictor import MLPredictor
 from src.ml.model_trainer import NBAModelTrainer
-from src.ml.data_collector import default_training_seasons, DEFAULT_MAX_GAMES
 from src.ml.pipeline import MLPipeline
 from src.utils.config import Config
 from src.utils.logger import setup_logger
-
 
 # ── App-Setup ─────────────────────────────────────────────────────────────────
 STATIC_DIR = Path(__file__).parent / "static"
@@ -72,7 +69,7 @@ def _run_pipeline_background(
         global _training_status
         _training_status = {"running": True, "step": "Starte Pipeline...", "done": False, "error": ""}
         try:
-            all_metrics = pipeline.run(
+            pipeline.run(
                 seasons=seasons,
                 max_games=max_games,
                 config=config,
@@ -291,26 +288,6 @@ def get_metrics():
     return jsonify({"available": True, **metrics})
 
 
-# ── API: Training auslösen (asynchron, über Pipeline) ────────────────────────
-
-@app.route("/api/train", methods=["POST"])
-def train():
-    if _training_status.get("running"):
-        return jsonify({"error": "Training läuft bereits"}), 409
-
-    data    = request.get_json() or {}
-    seasons = data.get("seasons") or default_training_seasons()
-    max_g   = data.get("max_games", DEFAULT_MAX_GAMES)
-
-    _run_pipeline_background(seasons=seasons, max_games=max_g)
-    return jsonify({"started": True})
-
-
-@app.route("/api/train/status")
-def train_status():
-    return jsonify(_training_status)
-
-
 # ── API: ML-Pipeline ──────────────────────────────────────────────────────────
 
 @app.route("/api/pipeline/status")
@@ -370,7 +347,7 @@ if __name__ == "__main__":
     threading.Thread(target=_monthly_scheduler, daemon=True).start()
 
     print("\n" + "="*55)
-    print("  🏀 NBA Tracker Web-Server")
+    print("  🏀 NBA Predict Web-Server")
     print("  http://localhost:5000")
     print("  ML-Pipeline: automatisches Monats-Retraining aktiv")
     print("="*55 + "\n")

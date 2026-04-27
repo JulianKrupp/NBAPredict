@@ -2,11 +2,13 @@
 Gemeinsame pytest-Fixtures für alle Tests.
 """
 
-import pytest
 from unittest.mock import MagicMock
-from src.utils.config import Config
-from src.models.team import Team
+
+import pytest
+
 from src.models.game import Game
+from src.models.team import Team
+from src.utils.config import Config
 
 
 @pytest.fixture

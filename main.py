@@ -1,5 +1,5 @@
 """
-NBA Tracker – Einstiegspunkt
+NBA Predict – CLI-Einstiegspunkt.
 
 Subkommandos:
   live, scores, standings, team
@@ -9,23 +9,23 @@ Subkommandos:
 """
 
 import argparse
-import sys
 import logging
+import sys
 
-from src.utils.logger import setup_logger
-from src.utils.config import Config
-from src.utils.display import display_games, display_standings
-from src.utils.ml_display import display_ml_prediction, display_model_metrics
 from src.api.nba_api_client import NBAApiClient
 from src.api.odds_api_client import OddsApiClient
-from src.ml.data_collector import default_training_seasons, DEFAULT_MAX_GAMES
-from src.ml.ml_predictor import MLPredictor
 from src.ml.comparison import OddsVsMLComparison
+from src.ml.data_collector import DEFAULT_MAX_GAMES, default_training_seasons
+from src.ml.ml_predictor import MLPredictor
+from src.utils.config import Config
+from src.utils.display import display_games, display_standings
+from src.utils.logger import setup_logger
+from src.utils.ml_display import display_ml_prediction, display_model_metrics
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="NBA Tracker – Ergebnisse, KI-Vorhersagen & Wettquoten",
+        description="NBA Predict – Ergebnisse, KI-Vorhersagen & Quoten-Vergleich",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command")

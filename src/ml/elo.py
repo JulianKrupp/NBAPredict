@@ -14,6 +14,7 @@ Elo-Werte aus 2021 die Ratings von 2024 unverhältnismäßig beeinflussen.
 from __future__ import annotations
 
 from collections import defaultdict
+
 from src.models.game import Game
 
 # Am Saisonstart wird (elo - 1500) um diesen Faktor reduziert.

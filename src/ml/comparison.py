@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 
 from src.api.nba_api_client import NBAApiClient
-from src.api.odds_api_client import OddsApiClient, GameOdds
+from src.api.odds_api_client import GameOdds, OddsApiClient
 from src.ml.ml_predictor import MLPredictor
 from src.utils.config import Config
 
@@ -147,7 +147,7 @@ class OddsVsMLComparison:
             return
 
         print(f"\n{'='*100}")
-        print(f"  🤖 KI vs. 📊 Wettquoten – Vergleich der Siegwahrscheinlichkeiten")
+        print("  🤖 KI vs. 📊 Wettquoten – Vergleich der Siegwahrscheinlichkeiten")
         print(f"{'='*100}")
         print(
             f"  {'Spiel':<42} "

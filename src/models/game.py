@@ -3,6 +3,7 @@ Datenmodell für ein NBA-Spiel.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -65,7 +66,7 @@ class Game:
         return dt.year if dt.month >= 10 else dt.year - 1
 
     @classmethod
-    def from_api_response(cls, data: dict) -> "Game":
+    def from_api_response(cls, data: dict) -> Game:
         """
         Erstellt ein Game-Objekt aus einem BallDontLie-API-Response-Dict.
         Je nach Endpoint sind Feldernamen unterschiedlich. zB. "name" und "full_name"

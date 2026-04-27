@@ -1,5 +1,5 @@
 """
-Logger-Konfiguration für den NBA Tracker.
+Logger-Konfiguration für NBA Predict.
 
 setup_logger() wird einmal beim Programmstart aufgerufen und konfiguriert das zentrale Python-Logging-System.
 Danach kann jedes Modul mit logging.getLogger(__name__) einen eigenen Logger holen — alle landen automatisch beim
@@ -48,7 +48,7 @@ def setup_logger(log_level: str = "INFO", log_file: str = "logs/nba_tracker.log"
 
         # Datei-Handler nur außerhalb von Docker (RotatingFileHandler schlägt auf
         # Windows-NTFS-Volumes via WSL2 bei shouldRollover fehl – OSError errno 5)
-        if not os.environ.get("FLASK_ENV") == "production":
+        if os.environ.get("FLASK_ENV") != "production":
             # console_handler.setLevel(numeric_level)     # Workaround, wenn man  vollständige logs in Docker möchte
             file_handler = logging.handlers.RotatingFileHandler(
                 log_path,

@@ -3,6 +3,7 @@ Ausgabe-Hilfsfunktionen für ML-Vorhersagen.
 """
 
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -27,7 +28,7 @@ def display_ml_prediction(result: MLPredictionResult) -> None:
     print(f"{'='*65}")
 
     # ML-Vorhersage
-    print(f"\n  🤖 ML-Modell (Logistische Regression)")
+    print("\n  🤖 ML-Modell (aktives Modell)")
     print(f"  {'─'*60}")
     _print_probability_bar("  Heim", home, result.ml_home_win_probability)
     _print_probability_bar("  Ausw", away, 1.0 - result.ml_home_win_probability)
@@ -37,13 +38,13 @@ def display_ml_prediction(result: MLPredictionResult) -> None:
     # Wettquoten
     if result.odds_home_win_probability is not None:
         odds_winner_name = home if result.odds_predicted_winner == "home" else away
-        print(f"\n  📊 Wettquoten (The Odds API, Vig-bereinigt)")
+        print("\n  📊 Wettquoten (The Odds API, Vig-bereinigt)")
         print(f"  {'─'*60}")
         _print_probability_bar("  Heim", home, result.odds_home_win_probability)
         _print_probability_bar("  Ausw", away, 1.0 - result.odds_home_win_probability)
         print(f"  Favorit lt. Quoten    : {odds_winner_name}")
     else:
-        print(f"\n  📊 Wettquoten : nicht verfügbar (ODDS_API_KEY nicht gesetzt)")
+        print("\n  📊 Wettquoten : nicht verfügbar (ODDS_API_KEY nicht gesetzt)")
 
     # Konsens
     agree_icon = "✅" if result.all_agree else "⚠️ "
@@ -59,7 +60,7 @@ def display_ml_prediction(result: MLPredictionResult) -> None:
     print(f"{'='*65}\n")
 
 
-def display_model_metrics(metrics: "ModelMetrics") -> None:
+def display_model_metrics(metrics: ModelMetrics) -> None:
     """
     Gibt die Modell-Evaluationsmetriken aus.
 
@@ -94,7 +95,7 @@ def _display_metrics_from_dict(metrics: dict) -> None:
     print(f"  Trainingssamples  : {metrics.get('train_samples', '?')}")
     top = metrics.get("top_features", [])
     if top:
-        print(f"\n  Top Features:")
+        print("\n  Top Features:")
         for item in top[:5]:
             name = item["feature"] if isinstance(item, dict) else item[0]
             imp = item["importance"] if isinstance(item, dict) else item[1]

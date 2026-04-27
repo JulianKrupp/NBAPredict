@@ -98,10 +98,10 @@ class BaseApiClient:
             self._offline_until   = _global_offline_until
             self.logger.error("API nicht erreichbar, pausiere %ds (DNS/Netzwerk)", _OFFLINE_COOLDOWN)
             raise ApiError(f"Verbindungsfehler: {exc}") from exc
-        except requests.exceptions.Timeout:
-            raise ApiError(f"Timeout nach {self.config.request_timeout}s für {url}")
-        except requests.exceptions.JSONDecodeError:
-            raise ApiError(f"Ungültige JSON-Antwort von {url}")
+        except requests.exceptions.Timeout as exc:
+            raise ApiError(f"Timeout nach {self.config.request_timeout}s für {url}") from exc
+        except requests.exceptions.JSONDecodeError as exc:
+            raise ApiError(f"Ungültige JSON-Antwort von {url}") from exc
 
     def _raise_for_status(self, response: requests.Response) -> None:
         if response.status_code == 401:

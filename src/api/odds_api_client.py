@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from src.api.base_client import BaseApiClient, ApiError
+from src.api.base_client import ApiError, BaseApiClient
 from src.utils.config import Config
 
 

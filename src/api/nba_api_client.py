@@ -11,7 +11,7 @@ import logging
 from collections import defaultdict
 from datetime import date
 
-from src.api.base_client import BaseApiClient, ApiError
+from src.api.base_client import ApiError, BaseApiClient
 from src.models.game import Game
 from src.models.team import Team
 from src.utils.config import Config
@@ -238,16 +238,6 @@ class NBAApiClient(BaseApiClient):
         except ApiError as exc:
             self.logger.debug("Team-IDs konnten nicht geladen werden: %s", exc)
             return {}
-
-    def _find_team_id(self, team_name: str) -> int | None:
-        for known_name, known_id in _KNOWN_TEAM_IDS.items():
-            if team_name.lower() in known_name.lower():
-                return known_id
-        ids = self._load_team_ids()
-        for name, tid in ids.items():
-            if team_name.lower() in name.lower():
-                return tid
-        return None
 
     def _parse_games(self, raw_games: list[dict]) -> list[Game]:
         games = []

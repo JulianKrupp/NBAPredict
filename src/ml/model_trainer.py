@@ -7,8 +7,8 @@ Vier Modelle (mit Literaturbelegen):
   3. XGBoost              – Chen & Guestrin (2016), KDD; Zimmermann (2016), IJCAI
   4. MLP Neural Network   – Loeffelholz et al. (2009), J. Quantitative Analysis in Sports
 
-Optimiert auf neg_brier_score (Kalibrierung), da kalibrierte Wahrscheinlichkeiten
-für die EV-Berechnung wichtiger sind als pure Accuracy.
+Auswahlkriterium: ROC-AUC. Robust bei leicht unbalancierten Klassen (~55% Heimsiege)
+und schwellenwert-unabhängig.
 """
 
 from __future__ import annotations
@@ -24,15 +24,15 @@ import joblib
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, brier_score_loss, roc_auc_score
 from sklearn.model_selection import (
+    StratifiedKFold,
     cross_val_score,
     train_test_split,
-    StratifiedKFold,
 )
 from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import accuracy_score, roc_auc_score, brier_score_loss
+from sklearn.preprocessing import StandardScaler
 
 try:
     from xgboost import XGBClassifier
@@ -40,7 +40,7 @@ try:
 except ImportError:
     _XGBOOST_AVAILABLE = False
 
-from src.ml.data_collector import TrainingSample, TRAINING_DATA_PATH
+from src.ml.data_collector import TRAINING_DATA_PATH, TrainingSample
 
 MODEL_DIR = Path("data/models")
 ACTIVE_MODEL_PATH = MODEL_DIR / "active_model.json"
@@ -49,8 +49,6 @@ PIPELINE_STATUS_PATH = MODEL_DIR / "pipeline_status.json"
 # Legacy-Pfad – abwärtskompatibel falls active_model.json fehlt
 MODEL_PATH = MODEL_DIR / "nba_predictor.joblib"
 METRICS_PATH = MODEL_DIR / "model_metrics.json"
-
-SCORING_METRIC = "neg_brier_score"
 
 
 # ── Modell-Definitionen ────────────────────────────────────────────────────────
@@ -65,7 +63,7 @@ def _build_logistic_regression() -> Any:
 
 def _build_random_forest() -> Any:
     """
-    Random Forest – ensemble of decision trees.
+    Random Forest – Ensemble aus Entscheidungsbäumen.
     Hyperparameter: n_estimators=300, max_depth=15, min_samples_leaf=5.
     Kein Scaler erforderlich (baumbasiert).
     """

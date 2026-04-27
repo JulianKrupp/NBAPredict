@@ -22,19 +22,15 @@ from __future__ import annotations
 import csv
 import json
 import logging
-import time
 from collections import defaultdict
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Iterator
 
 from src.api.nba_api_client import NBAApiClient
 from src.api.nba_stats_client import AdvancedTeamStats
-from src.api.base_client import ApiError
 from src.ml.elo import calculate_elo_per_game
 from src.models.game import Game
-from src.models.team import Team
 from src.utils.config import Config
 
 logger = logging.getLogger(__name__)
@@ -178,9 +174,7 @@ class TrainingSample:
         return [f for f in all_fields if f not in excluded_fields]
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Kumulativer Team-Tracker (v4) — eliminiert Data Leakage
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Kumulativer Team-Tracker (v4) – eliminiert Data Leakage ──────────────────
 
 
 class _CumulativeTeamTracker:
@@ -367,9 +361,7 @@ class _CumulativeTeamTracker:
                 self.away_losses += 1
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Kumulative Sample-Erstellung (v4) — KEIN Data Leakage
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Kumulative Sample-Erstellung (v4) – KEIN Data Leakage ────────────────────
 
 
 def build_samples_cumulative(
@@ -518,9 +510,7 @@ def build_samples_cumulative(
     return samples
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  TrainingDataCollector
-# ══════════════════════════════════════════════════════════════════════════════
+# ── TrainingDataCollector ────────────────────────────────────────────────────
 
 
 class TrainingDataCollector:
@@ -550,7 +540,7 @@ class TrainingDataCollector:
             seasons = default_training_seasons()
 
         print(f"\n{'='*60}")
-        print(f"  Trainingsdaten sammeln (v4 – kumulative Stats, leak-frei)")
+        print("  Trainingsdaten sammeln (v4 – kumulative Stats, leak-frei)")
         print(f"  Saisons: {seasons} | Max. Spiele: {max_games}")
         print(f"{'='*60}")
 

@@ -37,6 +37,14 @@ cp .env.example .env
 python web/server.py
 ```
 
+Alternativ als editierbares Paket installieren – stellt zusätzlich den CLI-Alias `nba` bereit:
+
+```bash
+pip install -e .
+nba live           # statt 'python main.py live'
+nba train all
+```
+
 ---
 
 ## Konfiguration (.env)
@@ -95,7 +103,7 @@ python main.py train metrics                          # Gespeicherte Metriken an
 | Heimteam Advanced | Off-Rating, Def-Rating, Net-Rating, Pace, True Shooting % |
 | Heimteam Form | letzte 5/10 Spiele, Streak, Fatigue-Score, Form-Rating, Ruhetage |
 | Auswärtsteam | identisch (18 Features) |
-| Differenz-Features | Δ Win-Rate, Δ Punkt-Diff, Δ Net-Rating, Δ Form, Δ Streak, Δ Fatigue |
+| Differenz-Features | Δ Win-Rate, Δ Punkt-Diff, Δ Net-Rating, Δ Last-5-Win-Rate, Δ Streak, Δ Fatigue |
 | Elo | home_elo, away_elo, diff_elo |
 
 > Advanced Stats (Off-/Def-Rating, Pace, TS%) werden im Training **ausschließlich aus kumulativen Spielergebnissen geschätzt** – kein externer API-Abruf, kein Data Leakage.

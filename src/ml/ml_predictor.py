@@ -1,7 +1,9 @@
 """
 ML-basierter Spielvorhersager.
 
-Nutzt das trainierte Logistic-Regression-Modell für Wahrscheinlichkeitsvorhersagen.
+Lädt das aktuell aktive Modell (siehe active_model.json) und liefert
+Wahrscheinlichkeitsvorhersagen. Das aktive Modell wird von MLPipeline
+nach jedem Training auf das mit höchstem ROC-AUC gesetzt.
 """
 
 from __future__ import annotations
@@ -15,12 +17,12 @@ from typing import Any
 import joblib
 import numpy as np
 
-from src.models.team import Team
+from src.api.nba_stats_client import AdvancedTeamStats, NBAStatsApiClient
 from src.api.odds_api_client import GameOdds
-from src.api.nba_stats_client import NBAStatsApiClient, AdvancedTeamStats
 from src.ml.data_collector import TrainingSample
 from src.ml.elo import calculate_elo_ratings
-from src.ml.model_trainer import NBAModelTrainer, MODEL_PATH, ACTIVE_MODEL_PATH, MODEL_DIR
+from src.ml.model_trainer import ACTIVE_MODEL_PATH, MODEL_DIR, MODEL_PATH, NBAModelTrainer
+from src.models.team import Team
 from src.utils.config import Config
 
 
@@ -49,7 +51,13 @@ class MLPredictionResult:
 
 
 class MLPredictor:
-    """ML-Modell Vorhersage auf Basis von Logistic Regression."""
+    """
+    Vorhersagen über das aktuell aktive ML-Modell.
+
+    Das Modell wird beim ersten Aufruf geladen und gecacht.
+    Wird active_model.json zwischenzeitlich geändert (z.B. nach einem
+    Pipeline-Lauf), invalidiert _load_model() den Cache automatisch.
+    """
 
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -255,8 +263,9 @@ class MLPredictor:
 
     def _compute_current_elo(self) -> dict[str, float]:
         try:
-            from src.api.nba_api_client import NBAApiClient
             from datetime import date
+
+            from src.api.nba_api_client import NBAApiClient
             nba = NBAApiClient(self.config)
             today = date.today()
             season = today.year - 1 if today.month < 10 else today.year

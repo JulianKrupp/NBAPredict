@@ -7,9 +7,9 @@ und Daten-Leakage-Prävention in calculate_elo_per_game.
 """
 
 import pytest
-from src.ml.elo import calculate_elo_ratings, calculate_elo_per_game, ELO_SEASON_REGRESSION
-from src.models.game import Game
 
+from src.ml.elo import ELO_SEASON_REGRESSION, calculate_elo_per_game, calculate_elo_ratings
+from src.models.game import Game
 
 # ── Hilfsfunktionen ──────────────────────────────────────────────────────────
 
@@ -180,8 +180,8 @@ class TestEloSeasonRegression:
         # Nach Regression (vor dem 2024er Spiel) wäre A's Elo:
         # 1500 + (elo_before - 1500) * 0.75
         expected_after_regression = 1500.0 + (elo_before - 1500.0) * ELO_SEASON_REGRESSION
-        # Nach dem zusätzlichen Sieg in 2024 liegt A leicht höher
-        assert ratings_after_regression["A"] > 1500.0  # Gewinner bleibt über 1500
+        # Nach dem zusätzlichen Sieg in 2024 liegt A leicht höher als der Regressionswert
+        assert ratings_after_regression["A"] > expected_after_regression
         # Aber deutlich unter dem Vor-Regressions-Wert
         assert ratings_after_regression["A"] < elo_before
 

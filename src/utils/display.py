@@ -1,17 +1,17 @@
 """
-Ausgabe-Hilfsfunktionen für den NBA Tracker (Terminal-Formatierung).
+Ausgabe-Hilfsfunktionen für NBA Predict (Terminal-Formatierung).
 """
 
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.models.game import Game
     from src.models.team import Team
-    from src.ml.ml_predictor import MLPredictionResult
 
 
-def display_games(games: list["Game"], title: str = "Spiele") -> None:
+def display_games(games: list[Game], title: str = "Spiele") -> None:
     """
     Gibt eine Liste von Spielen formatiert auf der Konsole aus.
 
@@ -37,7 +37,7 @@ def display_games(games: list["Game"], title: str = "Spiele") -> None:
 
 
 
-def display_standings(standings: list["Team"]) -> None:
+def display_standings(standings: list[Team]) -> None:
     """
     Gibt die Tabellenstände sortiert nach Win-Rate aus.
 
@@ -47,7 +47,7 @@ def display_standings(standings: list["Team"]) -> None:
     sorted_teams = sorted(standings, key=lambda t: t.win_rate, reverse=True)
 
     print(f"\n{'='*70}")
-    print(f"  🏆 NBA Tabelle")
+    print("  🏆 NBA Tabelle")
     print(f"{'='*70}")
     print(f"  {'#':>3}  {'Team':<28}  {'S':>4}  {'N':>4}  {'Win%':>6}  {'Ø Punkte':>9}")
     print(f"  {'-'*62}")
@@ -63,7 +63,7 @@ def display_standings(standings: list["Team"]) -> None:
 
 # ── Private Hilfsfunktionen ──────────────────────────────────────────────────
 
-def _format_status(game: "Game") -> str:
+def _format_status(game: Game) -> str:
     """Gibt einen lesbaren Status-String für ein Spiel zurück."""
     status_map = {
         "Final":     "Beendet",

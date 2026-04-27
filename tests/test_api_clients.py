@@ -2,11 +2,13 @@
 Unit-Tests für den NBAApiClient und OddsApiClient (mit Mock-Objekten).
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
-from src.api.nba_api_client import NBAApiClient, TEAM_NAME_ALIASES
-from src.api.odds_api_client import OddsApiClient, GameOdds
+
+import pytest
+
 from src.api.base_client import ApiError
+from src.api.nba_api_client import TEAM_NAME_ALIASES, NBAApiClient
+from src.api.odds_api_client import GameOdds, OddsApiClient
 from src.models.game import Game
 from src.utils.config import Config
 

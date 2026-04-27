@@ -5,8 +5,8 @@ Testet die Kernlogik aus src/ml/comparison.py ohne API-Aufrufe.
 """
 
 import pytest
-from src.ml.comparison import ComparisonEntry, OddsVsMLComparison
 
+from src.ml.comparison import ComparisonEntry, OddsVsMLComparison
 
 # ── Hilfsfunktion ─────────────────────────────────────────────────────────────
 

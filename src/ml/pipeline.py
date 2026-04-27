@@ -1,5 +1,5 @@
 """
-ML-Pipeline – Orchestrierung des monatlichen Modell-Retrainings.
+ML-Pipeline – steuert das monatliche Modell-Retraining.
 
 Ablauf:
   1. Trainingsdaten sammeln (TrainingDataCollector)
@@ -16,16 +16,16 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.ml.data_collector import default_training_seasons, DEFAULT_MAX_GAMES
+from src.ml.data_collector import DEFAULT_MAX_GAMES, default_training_seasons
 from src.ml.model_trainer import (
-    NBAModelTrainer,
-    ModelMetrics,
-    PIPELINE_STATUS_PATH,
     MODEL_DIR,
+    PIPELINE_STATUS_PATH,
+    ModelMetrics,
+    NBAModelTrainer,
 )
 
 if TYPE_CHECKING:
@@ -81,8 +81,8 @@ class MLPipeline:
         self,
         seasons: list[int] | None = None,
         max_games: int = DEFAULT_MAX_GAMES,
-        config: "Config | None" = None,
-        progress_callback: "callable | None" = None,
+        config: Config | None = None,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> list[ModelMetrics]:
         """
         Führt die komplette Pipeline aus:

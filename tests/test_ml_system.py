@@ -2,20 +2,19 @@
 Unit-Tests für das ML-System (v4) – 45 Features (ohne odds_implied_home_prob).
 """
 
-import pytest
-import numpy as np
-from unittest.mock import MagicMock
 from dataclasses import asdict
+from unittest.mock import MagicMock
 
-from src.ml.data_collector import TrainingSample, _CumulativeTeamTracker
-from src.ml.model_trainer import NBAModelTrainer, ModelMetrics
-from src.ml.ml_predictor import MLPredictor, MLPredictionResult
-from src.ml.comparison import OddsVsMLComparison, ComparisonEntry
+import pytest
+
 from src.api.nba_stats_client import AdvancedTeamStats
-from src.models.team import Team
 from src.api.odds_api_client import GameOdds
+from src.ml.comparison import ComparisonEntry, OddsVsMLComparison
+from src.ml.data_collector import TrainingSample, _CumulativeTeamTracker
+from src.ml.ml_predictor import MLPredictionResult, MLPredictor
+from src.ml.model_trainer import ModelMetrics, NBAModelTrainer
+from src.models.team import Team
 from src.utils.config import Config
-
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -92,9 +91,7 @@ def make_team(name: str = "Team", wins: int = 40, losses: int = 20,
     )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  TrainingSample Tests
-# ══════════════════════════════════════════════════════════════════════════════
+# ── TrainingSample Tests ────────────────────────────────────────────────────
 
 
 class TestTrainingSample:
@@ -177,9 +174,7 @@ class TestTrainingSample:
         assert "odds_implied_home_prob" in d
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  _CumulativeTeamTracker Tests (v4 – Data Leakage Fix)
-# ══════════════════════════════════════════════════════════════════════════════
+# ── _CumulativeTeamTracker Tests (v4 – Data Leakage Fix) ────────────────────
 
 
 class TestCumulativeTeamTracker:
@@ -276,9 +271,7 @@ class TestCumulativeTeamTracker:
         assert adv.true_shooting_pct == pytest.approx(0.568, abs=0.001)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  NBAModelTrainer Tests
-# ══════════════════════════════════════════════════════════════════════════════
+# ── NBAModelTrainer Tests ───────────────────────────────────────────────────
 
 
 class TestNBAModelTrainer:
@@ -333,9 +326,7 @@ class TestNBAModelTrainer:
         assert trainer.feature_names == expected
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  MLPredictor Tests
-# ══════════════════════════════════════════════════════════════════════════════
+# ── MLPredictor Tests ───────────────────────────────────────────────────────
 
 
 def _make_adv_stats(name: str) -> AdvancedTeamStats:
@@ -405,9 +396,7 @@ class TestMLPredictor:
             predictor._get_advanced_stats(make_team("Unbekannt"))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  ComparisonEntry Tests
-# ══════════════════════════════════════════════════════════════════════════════
+# ── ComparisonEntry Tests ───────────────────────────────────────────────────
 
 
 class TestComparisonEntry:
@@ -444,9 +433,7 @@ class TestComparisonEntry:
         assert h > a
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Elo Tests
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Elo Tests ───────────────────────────────────────────────────────────────
 
 
 class TestElo:

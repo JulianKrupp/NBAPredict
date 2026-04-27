@@ -1,7 +1,7 @@
+from .comparison import ComparisonEntry, OddsVsMLComparison
 from .data_collector import TrainingDataCollector, TrainingSample
-from .model_trainer import NBAModelTrainer, ModelMetrics
-from .ml_predictor import MLPredictor, MLPredictionResult
-from .comparison import OddsVsMLComparison, ComparisonEntry
+from .ml_predictor import MLPredictionResult, MLPredictor
+from .model_trainer import ModelMetrics, NBAModelTrainer
 
 __all__ = [
     "TrainingDataCollector", "TrainingSample",
