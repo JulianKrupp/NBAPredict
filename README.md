@@ -1,205 +1,121 @@
-# 🏀 NBA Predict
+# NBA Predict
 
-NBA-Vorhersagesystem mit ML-Pipeline, Quoten-Vergleich und EV-Analyse. Läuft als Web-App (Docker) oder CLI.
+**Ein datengetriebenes Prognose- und Analysetool für die National Basketball Association (NBA).**
 
----
-
-## APIs
-
-| # | API | Zweck | Key |
-|---|-----|-------|-----|
-| 1 | [BallDontLie](https://www.balldontlie.io) | Spielergebnisse, Scores, Trainingsdaten | ✅ Free Tier |
-| 2 | [The Odds API](https://the-odds-api.com) | Buchmacher-Quoten (500 Req/Monat) | ✅ Free Tier |
-| 3 | [nba_api](https://github.com/swar/nba_api) | Advanced Stats von stats.nba.com (nur Vorhersage) | ❌ Kein Key |
-
-> **Hinweis:** `nba_api` ist ein inoffizielles Community-Package das stats.nba.com abfragt. Wird nur bei der Live-Vorhersage genutzt, nicht mehr beim Training.
+Dieses Projekt wurde im Rahmen des Moduls *Fortgeschrittene Programmierung* im 2. Semester Wirtschaftsinformatik (Data Science) entwickelt. Es demonstriert die Integration von Machine Learning, Datenbeschaffung über externe Schnittstellen (APIs) und modularem Software-Engineering auf Produktionsniveau.
 
 ---
 
-## Schnellstart
+## 1. TITEL & VISION
 
-### Docker (empfohlen)
+### Vision und Business Case
+Die präzise Vorhersage von Sportergebnissen bietet enormes Potenzial für die moderne Sportanalytik. **NBA Predict** verfolgt das Ziel, rohe, historische NBA-Spieldaten in verwertbares Wissen (Insights) zu transformieren. 
 
-```bash
-cp .env.example .env      # API-Keys eintragen
-docker compose up -d
-# → http://localhost:5000
-```
-
-### Lokal
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate    # Windows
-source .venv/bin/activate # Linux/macOS
-pip install -r requirements.txt
-cp .env.example .env
-python web/server.py
-```
-
-Alternativ als editierbares Paket installieren – stellt zusätzlich den CLI-Alias `nba` bereit:
-
-```bash
-pip install -e .
-nba live           # statt 'python main.py live'
-nba train all
-```
+Für Sport-Analysten und Wettanbieter entsteht ein direkter Business Case: Durch das automatisierte Scraping aktueller Buchmacherquoten und deren Abgleich mit unseren ML-basierten Siegwahrscheinlichkeiten identifiziert das System profitable Wettchancen (Expected Value / Value Bets). Die Anwendung dient somit als fundiertes Decision-Support-System, das emotionale Bauchentscheidungen durch statistische Wahrscheinlichkeiten ersetzt.
 
 ---
 
-## Konfiguration (.env)
+## 2. FEATURES
 
-```env
-BALLDONTLIE_API_KEY=...   # Pflicht  → balldontlie.io
-ODDS_API_KEY=...          # Optional → the-odds-api.com (für Quoten-Vergleich)
-```
-
----
-
-## Web-Interface
-
-| Tab | Funktion |
-|-----|----------|
-| **Stand** | Tabelle berechnet aus Spielergebnissen (kein /standings-Endpunkt im Free Tier) |
-| **Spiele** | Scores nach Datum, Auto-Refresh 1–7 Uhr MEZ |
-| **KI-Vorhersage** | ML-Modell + Wettquoten im Vergleich, Pipeline-Status, manuelles Retraining |
-| **KI vs Quoten** | Wahrscheinlichkeitsvergleich, Vig-bereinigt, EV- und Edge-Analyse |
+| Kategorie | Kernfunktionen |
+| :--- | :--- |
+| **Daten-Scraping & ETL** | Vollautomatische Anbindung der *BallDontLie API*, *NBA Stats API* und *The Odds API* zum Abrufen historischer Spiele, Advanced Stats und Live-Buchmacherquoten. |
+| **Feature Engineering** | Berechnung komplexer Features zur Laufzeit (z.B. kumulatives Elo-Rating, Fatigue-Metriken, Offensive/Defensive Ratings) zur Vermeidung von Data Leakage. |
+| **ML-Prediction-Logik** | Training und Evaluierung mehrerer Algorithmen (Logistic Regression, XGBoost, Random Forest, MLP). Dynamische Selektion des kalibriertesten Modells (Brier Score / ROC-AUC) zur Vorhersage. |
+| **CLI & Web-Dashboard** | Hybrides Bedienkonzept: Eine leichtgewichtige Kommandozeile (CLI) für Entwickler und ein interaktives Flask-Web-Dashboard für Endanwender. |
 
 ---
 
-## CLI
+## 3. PROJEKTSTRUKTUR
 
-```bash
-# Spieldaten
-python main.py live
-python main.py scores --date 2025-03-01
-python main.py standings
-python main.py team lakers
+Das System folgt strikt den Prinzipien des **Clean Code** und des **Single Responsibility Principles (SRP)**. Im Zuge von Refactorings wurden veraltete, ungenutzte Module (`src/betting`, `src/prediction-rules`) restlos entfernt. Die verbleibende Architektur trennt Infrastruktur, Geschäftslogik und Datenstrukturen sauber voneinander:
 
-# Vorhersage
-python main.py ml-predict lakers celtics
-
-# Quoten-Vergleich
-python main.py compare
-python main.py compare --home lakers --away celtics
-
-# Training
-python main.py train collect                          # Daten sammeln (Standard: letzte 4 Saisons)
-python main.py train collect --seasons 2022 2023 2024 --max-games 5000
-python main.py train model                            # Nur Modell trainieren
-python main.py train all                              # Alles in einem Schritt
-python main.py train metrics                          # Gespeicherte Metriken anzeigen
-```
-
----
-
-## ML-System
-
-### Features (45 gesamt)
-
-| Kategorie | Features |
-|-----------|----------|
-| Heimteam Basis | Win-Rate, Punkt-Diff, Ø Pts scored/allowed, Heim/Auswärts-WR |
-| Heimteam Advanced | Off-Rating, Def-Rating, Net-Rating, Pace, True Shooting % |
-| Heimteam Form | letzte 5/10 Spiele, Streak, Fatigue-Score, Form-Rating, Ruhetage |
-| Auswärtsteam | identisch (18 Features) |
-| Differenz-Features | Δ Win-Rate, Δ Punkt-Diff, Δ Net-Rating, Δ Last-5-Win-Rate, Δ Streak, Δ Fatigue |
-| Elo | home_elo, away_elo, diff_elo |
-
-> Advanced Stats (Off-/Def-Rating, Pace, TS%) werden im Training **ausschließlich aus kumulativen Spielergebnissen geschätzt** – kein externer API-Abruf, kein Data Leakage.
-
-### Modell-Pipeline
-
-Jeden Monat werden alle vier Modelle auf denselben Daten trainiert. Das Modell mit dem höchsten **ROC-AUC** wird automatisch als aktives Modell gesetzt.
-
-| Modell | Warum dabei |
-|--------|-------------|
-| **Logistic Regression** | Inherent gut kalibriert, liefert zuverlässige Wahrscheinlichkeiten |
-| **Random Forest** | Robustes Ensemble, fängt nicht-lineare Zusammenhänge |
-| **XGBoost** | Gradient Boosting, stark bei tabellarischen Daten |
-| **MLP** | Neuronales Netz, lernt komplexe Feature-Interaktionen |
-
-> **Warum ROC-AUC als Auswahlkriterium?** ROC-AUC misst, wie gut das Modell zwischen Sieg und Niederlage unterscheiden kann – unabhängig vom Schwellenwert. Robust bei leicht unbalancierten Klassen (~55% Heimsiege).
-
-### Trainingsdaten
-
-- **Quelle:** BallDontLie API (abgeschlossene Spiele)
-- **Umfang:** ~5000 Spiele aus den letzten 4 NBA-Saisons (dynamisch berechnet)
-- **Saisons:** werden automatisch ermittelt – April 2026 → [2022, 2023, 2024, 2025]
-- **Kein Leakage:** Statistiken werden für jedes Spiel nur aus vorherigen Spielen berechnet
-
-### Aktuelle Metriken
-
-Nach dem letzten Training einsehbar über:
-```bash
-python main.py train metrics
-# oder im Web unter KI-Vorhersage → Modell-Übersicht
-```
-
-> **Einordnung:** Heimsieg-Baseline ~55%, reines Elo-Modell ~60%, Buchmacher ~67%. Realistische Erwartung für ein faires Modell: 64–68%.
-
----
-
-## Tests
-
-```bash
-pytest                              # Alle Tests + Coverage
-pytest tests/test_ml_system.py -v  # ML-Pipeline-Tests
-pytest tests/test_elo.py -v         # Elo + Data-Leakage-Tests
-ruff check src/                     # Linting
-```
-
-| Datei | Schwerpunkt |
-|-------|-------------|
-| `test_ml_system.py` | ML-Pipeline, CumulativeTeamTracker, compute_advanced_stats |
-| `test_elo.py` | Elo-Berechnung, Nullsumme, Heimvorteil |
-| `test_comparison.py` | KI vs. Quoten, EV-Formel, Edge-Stufen |
-| `test_api_clients.py` | API-Client-Logik |
-| `test_game.py` / `test_team.py` | Datenmodelle |
-
----
-
-## Projektstruktur
-
-```
-├── main.py                         # CLI-Einstiegspunkt
-├── pyproject.toml                  # Projekt-Konfiguration, Ruff, pytest
-├── Dockerfile                      # Multi-Stage-Build
-├── docker-compose.yml
-├── .env.example
+```text
+NBAPredict/
 │
-├── src/
-│   ├── api/
-│   │   ├── base_client.py          # HTTP-Basis (Retry, Cache, Circuit Breaker)
-│   │   ├── nba_api_client.py       # BallDontLie API
-│   │   ├── nba_stats_client.py     # nba_api → stats.nba.com (nur Vorhersage)
-│   │   └── odds_api_client.py      # The Odds API
-│   │
-│   ├── ml/
-│   │   ├── data_collector.py       # Trainingsdaten (45 Features, kumulativ, leak-frei)
-│   │   ├── elo.py                  # Elo-Rating-Berechnung
-│   │   ├── pipeline.py             # ML-Pipeline (Status, monatliches Retraining)
-│   │   ├── model_trainer.py        # 4 Modelle trainieren, bestes auswählen
-│   │   ├── ml_predictor.py         # ML-Vorhersage (lädt aktives Modell dynamisch)
-│   │   └── comparison.py           # ML vs. Wettquoten, EV-Berechnung
-│   │
-│   └── utils/
-│       ├── config.py
-│       ├── logger.py
-│       └── display.py
+├── main.py                 # Zentraler CLI-Einstiegspunkt
+├── Dockerfile              # Multi-Stage-Build-Anweisung für Produktion
+├── docker-compose.yml      # Orchestrierung des Web-Containers
+├── requirements.txt        # Abhängigkeitsmanagement
 │
-├── web/
-│   ├── server.py                   # Flask REST-API
-│   └── static/                     # index.html, app.js, style.css
+├── src/                    # Geschäftslogik & Core-Module
+│   ├── api/                # API-Clients für externe Daten (Adapter-Pattern)
+│   ├── ml/                 # Data Collection, Pipeline, Training & Inferenz
+│   ├── models/             # Domänenmodelle (Game, Team) als Dataclasses
+│   └── utils/              # Hilfsmodule (Config, Logging, Formatting)
 │
-├── tests/
-└── data/
-    ├── training/                   # CSV + Metadaten (lokal generiert, nicht in Git)
-    └── models/                     # *.joblib + Metriken-JSON + Pipeline-Status
+├── tests/                  # Testumgebung (Unittests, Mocking, Coverage)
+└── web/                    # Präsentationsschicht (Flask REST-API & Frontend)
 ```
 
 ---
 
-## Commit-Konventionen
+## 4. INSTALLATION & SETUP
 
-`feat:` · `fix:` · `refactor:` · `test:` · `docs:` · `chore:`
+Das Projekt unterstützt ein hybrides Setup. Für den produktiven Einsatz wird Docker empfohlen, um eine isolierte, reproduzierbare Umgebung zu garantieren.
+
+### Option A: Docker-Environment (Produktion)
+Voraussetzung: [Docker Desktop](https://www.docker.com/products/docker-desktop/) ist installiert.
+
+1. `.env`-Datei anlegen: `cp .env.example .env` (API-Keys eintragen)
+2. Container bauen und im Hintergrund starten:
+   ```bash
+   docker-compose up --build -d
+   ```
+3. Das Web-Dashboard ist unter **http://localhost:5000** erreichbar.
+
+### Option B: Lokales venv (Entwicklung)
+Voraussetzung: Python 3.12+
+
+1. Virtuelle Umgebung erstellen und aktivieren:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate       # macOS/Linux
+   .venv\Scripts\activate          # Windows
+   ```
+2. Abhängigkeiten installieren:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. `.env`-Datei anlegen und konfigurieren (`cp .env.example .env`).
+4. Web-Server starten:
+   ```bash
+   python web/server.py
+   ```
+*(Alternativ kann die CLI genutzt werden: `python main.py --help`)*
+
+---
+
+## 5. CODE-QUALITÄT & STABILITÄT
+
+Um Laufzeitfehler während des laufenden Betriebs (insbesondere bei inkonsistenten API-Antworten) zu verhindern, setzt NBA Predict auf:
+*   **Integriertes Exception Handling:** Fehler bei Netzwerkanfragen werden durch spezifische Exceptions (`ApiError`) abgefangen. Es existiert eine automatisierte Retry-Logik mit Backoff für vorübergehende API-Ausfälle.
+*   **Zentrales Logging:** Alle relevanten Ereignisse, Warnungen und Fehler werden zentral erfasst und in die Datei `logs/nba_predict.log` geschrieben. Dies erlaubt eine präzise Überwachung des Docker-Containers (`nba-predict-web`) in Produktion.
+
+---
+
+## 6. TESTING
+
+Eine umfassende Test-Coverage ist essentiell für die funktionale Korrektheit komplexer ML-Pipelines. Wir nutzen `pytest` für unsere Tests und stellen sicher, dass alle kritischen Berechnungen (z.B. Elo-Rating) korrekt und frei von Data-Leakage sind.
+
+**Tests ausführen:**
+```bash
+# Gesamte Testsuite durchlaufen
+pytest
+
+# Testsuite mit Coverage-Report ausführen (Sollwert: >75%)
+pytest --cov=src
+```
+
+---
+
+## 7. TECH-STACK
+
+Die gewählten Technologien entsprechen modernen Data-Science-Standards:
+
+*   **Backend & CLI:** Python 3.12
+*   **Machine Learning:** Scikit-learn, XGBoost, Numpy, Pandas (via nba_api)
+*   **Web-API & Frontend:** Flask, Flask-CORS, Vanilla HTML/CSS/JS
+*   **Infrastruktur & DevOps:** Docker, Docker-Compose, python-dotenv
+*   **Testing & Linting:** Pytest, pytest-cov, Ruff
+*   **Persistenz:** JSON und Joblib (lokale Speicherung von Modellen und Logs – keine externe Datenbank wie MongoDB erforderlich, um das Setup leichtgewichtig zu halten).

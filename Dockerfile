@@ -1,4 +1,4 @@
-# ── NBA Tracker – Docker Image ────────────────────────────────────────────────
+# ── NBA Predict – Docker Image ────────────────────────────────────────────────
 # Multi-Stage-Build: Builder installiert Abhängigkeiten, Runtime bleibt schlank.
 
 # ── Stage 1: Abhängigkeiten installieren ─────────────────────────────────────
@@ -35,7 +35,7 @@ COPY web/      ./web/
 COPY main.py   .
 
 # Laufzeit-Verzeichnisse anlegen
-RUN mkdir -p logs data/betting data/models data/training_data data/cache
+RUN mkdir -p logs data/models data/training_data data/cache
 
 # Flask-Konfiguration
 ENV FLASK_ENV=production

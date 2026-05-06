@@ -126,7 +126,7 @@ COPY main.py   .
 Kopiert den Quellcode. Nur die nötigen Ordner – keine Tests, keine Docs.
 
 ```dockerfile
-RUN mkdir -p logs data/betting data/models data/training_data data/cache
+RUN mkdir -p logs data/models data/training_data data/cache
 ```
 Legt Verzeichnisse an, die das Programm erwartet. Ohne `mkdir` würde
 der Server beim Starten abstürzen, weil er `logs/` nicht schreiben kann.
@@ -217,7 +217,7 @@ Definiert einen Service namens `web`. Es können mehrere Services
 Baut das Image aus dem `Dockerfile` im aktuellen Verzeichnis (`.`).
 
 ```yaml
-    container_name: nba-tracker-web
+    container_name: nba-predict-web
 ```
 Gibt dem laufenden Container einen festen Namen. Ohne diesen Eintrag
 würde Docker einen zufälligen Namen generieren (z.B. `nbapredict_web_1`).
@@ -389,7 +389,7 @@ cp .env.example .env
 | `RETRY_DELAY` | Sekunden zwischen Wiederholungen | `1.0` |
 | `CACHE_TTL` | Cache-Lebensdauer in Sekunden | `300` |
 | `LOG_LEVEL` | Detailtiefe der Logs (DEBUG/INFO/WARNING/ERROR) | `INFO` |
-| `LOG_FILE` | Pfad zur Log-Datei | `logs/nba_tracker.log` |
+| `LOG_FILE` | Pfad zur Log-Datei | `logs/nba_predict.log` |
 
 ---
 
