@@ -46,7 +46,13 @@ data/cache/
 
 # Generierte Trainingsdaten (groß, lokal neu erzeugbar)
 data/training/training_data.csv
+data/training/metadata.json
 
-# Pipeline-Laufzeitstatus (ändert sich ständig, kein Mehrwert in Git)
-data/models/pipeline_status.json
-data/models/active_model.json
+# Trainierte Modelle (binär, reproduzierbar via 'train all')
+data/models/*.joblib
+
+# Generierte Modell-Metriken (ändern sich bei jedem Training)
+data/models/*.json
+
+# Word-Dokumente
+*.docx
