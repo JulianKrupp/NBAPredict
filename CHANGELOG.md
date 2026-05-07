@@ -5,6 +5,83 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ---
 
+## [2.2.0] – Dokumentation, .gitignore-Bereinigung & Autoren
+
+Abschlusspflege vor Projektabgabe: README vollständig auf tatsächlichen
+Projektstand gebracht, generierte Artefakte aus Git-Tracking entfernt
+und Autorenliste ergänzt.
+
+### Hinzugefügt
+
+- **README.md**: Abschnitte für Umgebungsvariablen, CLI-Referenz (alle 10 Befehle
+  mit Beispielen), Web-Dashboard-Routen, bekannte Einschränkungen und Autoren
+  neu eingeführt. Projektstruktur um `data/`, `logs/`, `pyproject.toml` und
+  `.env.example` ergänzt.
+- **Autoren**: Julian Krupp, Max Hähnel, Teodor in README dokumentiert.
+
+### Geändert
+
+- **`.gitignore`**: Einträge für `data/models/*.joblib`, `data/models/*.json`,
+  `data/training/metadata.json` und `*.docx` ergänzt – verhindert versehentliches
+  Einchecken generierter Trainingsartefakte und Binärdateien.
+
+### Entfernt
+
+- **`INFRASTRUCTURE.md`**: Datei entfernt – Inhalt war veraltet und durch
+  README sowie Dockerfile vollständig abgedeckt.
+
+---
+
+## [2.1.0] – Projektumbenennung, Modulbereinigung, Timezone-Fix & Test-Coverage
+
+Vier unabhängige Verbesserungsbereiche: Das Projekt heißt nun einheitlich
+**NBA Predict** (vorher NBA Tracker). Verbleibende Überreste des Betting-Systems
+wurden vollständig entfernt. Ein Timezone-Bug im Frontend verursachte falsche
+Datumswerte nach Mitternacht MEZ. Die Test-Coverage wurde von 64 % auf 75,65 %
+angehoben und erfüllt damit erstmals den definierten Sollwert.
+
+### Geändert
+
+- **Projektname** (`main.py`, `web/server.py`, `web/static/index.html`,
+  `docker-compose.yml`, `Dockerfile`, `src/utils/logger.py` u.a.): Alle
+  Vorkommen von „NBA Tracker" durch „NBA Predict" ersetzt. Log-Dateiname
+  (`nba_predict.log`), Container-Label und CLI-Hilftexte aktualisiert.
+- **Codebase-Refactoring** (29 Dateien): Unbenutzte Imports, tote Methoden
+  und veraltete Konstanten entfernt. Docstrings mit falschen Modellnamen und
+  Metriken korrigiert. Kommentarstil codebaseweit auf `// ── Name ──`-Format
+  vereinheitlicht und ins Deutsche übertragen. Alle Ruff-Warnungen behoben.
+- **`docker-compose.yml`**: Legacy-Services und veraltete Verzeichnis-Erstellungen
+  aus der Betting-Ära entfernt.
+
+### Behoben
+
+- **Timezone-Bug** (`web/static/app.js`): `toISOString()` lieferte nach
+  Mitternacht MEZ das Vortages-Datum (UTC-Versatz). Ersetzt durch
+  `localDateString()`, das die lokale Systemzeit korrekt ausliest.
+- **`abbr()`-Fallback** (`web/static/app.js`): Leere Strings nach `split(' ')`
+  wurden nicht gefiltert und konnten zu fehlerhaften Team-Kürzeln führen.
+
+### Entfernt
+
+- **`src/betting/`** und **`src/prediction/`**: Verbliebene leere Module
+  (`__init__.py`) und die SQLite-Datenbank (`data/betting/bets.db`) vollständig
+  gelöscht. Die Module existierten nur noch als Rumpf ohne Funktionalität.
+
+### Tests
+
+| Testsuite | Vorher | Nachher | Δ Coverage |
+| :--- | :--- | :--- | :--- |
+| `test_pipeline.py` (neu, 23 Tests) | – | 100 % | +100 % |
+| `test_comparison.py` (+10 Tests) | 44 % | 99 % | +55 % |
+| `test_base_client.py` (neu, 12 Tests) | 65 % | 97 % | +32 % |
+| **Gesamt** | **64 %** | **75,65 %** | **+11,65 pp** |
+
+Neue Tests decken ab: `MLPipeline` (Status, `should_retrain`, `run()` mit
+Mocks), `OddsVsMLComparison` (run, display), `BaseApiClient` (Cache, TTL,
+HTTP 401/403/404/429, Circuit Breaker).
+
+---
+
 ## [2.0.0] – Multi-Modell ML-Pipeline mit monatlichem Auto-Retraining
 
 Komplette Überarbeitung der ML-Komponente: Statt einem einzelnen
