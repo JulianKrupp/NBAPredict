@@ -229,4 +229,4 @@ Entwickelt im Rahmen des Moduls *Fortgeschrittene Programmierung* (2. Semester, 
 
 *   **Julian Krupp**
 *   **Max Hähnel**
-*   **Teodor**
+*   **Teodor Gjorgjeski**
