@@ -146,7 +146,7 @@ def api_status():
 @app.route("/api/standings")
 @handle_errors
 def get_standings():
-    season = request.args.get("season", 2024, type=int)
+    season = request.args.get("season", nba_client._current_season(), type=int)
     teams = nba_client.get_standings(season)
     return jsonify([{
         "name":        t.name,

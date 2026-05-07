@@ -123,6 +123,10 @@ async function loadStandings() {
   const el = document.getElementById('standings-content');
   el.innerHTML = loadingHtml('Lade Standings...');
   try {
+    const now = new Date();
+    const season = now.getMonth() >= 9 ? now.getFullYear() : now.getFullYear() - 1;
+    const label = document.getElementById('standings-season-label');
+    if (label) label.textContent = `Saison ${season}/${String(season + 1).slice(-2)} · berechnet aus Spielergebnissen`;
     const teams = await apiFetch('/api/standings');
     teamNames = teams.map(t => t.name);
     updateTeamList();
