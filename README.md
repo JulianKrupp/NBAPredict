@@ -2,16 +2,26 @@
 
 **Ein datengetriebenes Prognose- und Analysetool für die National Basketball Association (NBA).**
 
-Dieses Projekt wurde im Rahmen des Moduls *Fortgeschrittene Programmierung* im 2. Semester Wirtschaftsinformatik (Data Science) entwickelt. Es demonstriert die Integration von Machine Learning, Datenbeschaffung über externe Schnittstellen (APIs) und modularem Software-Engineering auf Produktionsniveau.
+Dieses Projekt wurde im Rahmen des Moduls *Fortgeschrittene Programmierung* im 2. Semester Wirtschaftsinformatik (Data Science) entwickelt. Es verbindet Datenbeschaffung über externe Schnittstellen (APIs), Feature Engineering, den Vergleich mehrerer Machine-Learning-Modelle und eine modulare, getestete Codebasis.
 
 ---
 
-## 1. TITEL & VISION
+## 1. ZIEL & ERGEBNISSE
 
-### Vision und Business Case
-Die präzise Vorhersage von Sportergebnissen bietet enormes Potenzial für die moderne Sportanalytik. **NBA Predict** verfolgt das Ziel, rohe, historische NBA-Spieldaten in verwertbares Wissen (Insights) zu transformieren. 
+### Ziel
+**NBA Predict** sagt auf Basis historischer NBA-Spieldaten die Siegwahrscheinlichkeit des Heimteams voraus. Das Projekt deckt den kompletten Ablauf ab: Daten über APIs abrufen, Merkmale berechnen, mehrere Modelle trainieren und vergleichen, Ergebnisse in CLI und Web-Dashboard anzeigen. Als externer Vergleichsmaßstab lassen sich die Modellwahrscheinlichkeiten zusätzlich den aus Buchmacherquoten abgeleiteten Wahrscheinlichkeiten gegenüberstellen.
 
-Für Sport-Analysten und Wettanbieter entsteht ein direkter Business Case: Durch das automatisierte Scraping aktueller Buchmacherquoten und deren Abgleich mit unseren ML-basierten Siegwahrscheinlichkeiten identifiziert das System profitable Wettchancen (Expected Value / Value Bets). Die Anwendung dient somit als fundiertes Decision-Support-System, das emotionale Bauchentscheidungen durch statistische Wahrscheinlichkeiten ersetzt.
+### Ergebnisse (Training vom 03.06.2026)
+Datengrundlage: 4.377 abgeschlossene Spiele der Saisons 2022–2025, 45 Merkmale, Aufteilung 3.501 Trainings- / 876 Testspiele. Zum Vergleich: Wer immer auf das Heimteam tippt, liegt in diesem Datensatz bei 55,1 %.
+
+| Modell | Accuracy (Test) | ROC-AUC | Brier Score | CV-Accuracy |
+| :--- | ---: | ---: | ---: | ---: |
+| **Logistic Regression** (aktiv) | **66,7 %** | **0,722** | **0,212** | 65,5 % |
+| MLP | 64,2 % | 0,715 | 0,214 | 63,9 % |
+| XGBoost | 64,0 % | 0,694 | 0,222 | 64,1 % |
+| Random Forest | 63,0 % | 0,700 | 0,218 | 65,4 % |
+
+Die wichtigsten Merkmale des aktiven Modells sind die Siegquoten beider Teams, die Elo-Differenz und die Ermüdungswerte. Die Zahlen lassen sich mit `python main.py train all` und `python main.py train metrics` reproduzieren; sie verändern sich mit jedem neuen Trainingslauf leicht.
 
 ---
 
@@ -19,7 +29,7 @@ Für Sport-Analysten und Wettanbieter entsteht ein direkter Business Case: Durch
 
 | Kategorie | Kernfunktionen |
 | :--- | :--- |
-| **Daten-Scraping & ETL** | Vollautomatische Anbindung der *BallDontLie API*, *NBA Stats API* und *The Odds API* zum Abrufen historischer Spiele, Advanced Stats und Live-Buchmacherquoten. |
+| **Datenbeschaffung & ETL** | Anbindung der *BallDontLie API*, *NBA Stats API* und *The Odds API* zum Abrufen historischer Spiele, Advanced Stats und aktueller Quoten. |
 | **Feature Engineering** | Berechnung komplexer Features zur Laufzeit (z.B. kumulatives Elo-Rating, Fatigue-Metriken, Offensive/Defensive Ratings) zur Vermeidung von Data Leakage. |
 | **ML-Prediction-Logik** | Training und Evaluierung mehrerer Algorithmen (Logistic Regression, XGBoost, Random Forest, MLP). Dynamische Selektion des kalibriertesten Modells (Brier Score / ROC-AUC) zur Vorhersage. |
 | **CLI & Web-Dashboard** | Hybrides Bedienkonzept: Eine leichtgewichtige Kommandozeile (CLI) für Entwickler und ein interaktives Flask-Web-Dashboard für Endanwender. |
@@ -34,7 +44,7 @@ Das System folgt strikt den Prinzipien des **Clean Code** und des **Single Respo
 NBAPredict/
 │
 ├── main.py                 # Zentraler CLI-Einstiegspunkt
-├── Dockerfile              # Multi-Stage-Build-Anweisung für Produktion
+├── Dockerfile              # Multi-Stage-Build für ein schlankes Image
 ├── docker-compose.yml      # Orchestrierung des Web-Containers
 ├── requirements.txt        # Abhängigkeitsmanagement (Laufzeit)
 ├── pyproject.toml          # Dev-Abhängigkeiten, Ruff-Linting & Pytest-Konfiguration
@@ -85,9 +95,9 @@ LOG_FILE=logs/nba_tracker.log
 
 ## 5. INSTALLATION & SETUP
 
-Das Projekt unterstützt ein hybrides Setup. Für den produktiven Einsatz wird Docker empfohlen, um eine isolierte, reproduzierbare Umgebung zu garantieren.
+Das Projekt lässt sich per Docker oder in einer lokalen virtuellen Umgebung starten. Docker ist der schnellste Weg zu einer isolierten, reproduzierbaren Umgebung.
 
-### Option A: Docker-Environment (Produktion)
+### Option A: Docker
 Voraussetzung: [Docker Desktop](https://www.docker.com/products/docker-desktop/) ist installiert.
 
 1. `.env`-Datei anlegen: `cp .env.example .env` (API-Keys eintragen)
@@ -131,12 +141,12 @@ Die Kommandozeile ist der primäre Einstiegspunkt für Entwickler. Alle Befehle 
 | `scores` | `[--date YYYY-MM-DD]` | Spielergebnisse für ein Datum (Standard: heute). |
 | `standings` | – | Aktuelle NBA-Tabelle mit Team-Statistiken. |
 | `team <name>` | Teamname (z. B. `Lakers`) | Detaillierte Statistiken eines Teams. |
-| `ml-predict <home> <away>` | Heim- und Auswärtsteam | KI-Vorhersage inkl. Buchmacher-Abgleich. |
+| `ml-predict <home> <away>` | Heim- und Auswärtsteam | Modellvorhersage inkl. Vergleich mit den Quoten. |
 | `train collect` | `[--seasons …] [--max-games N]` | Rohdaten von der NBA-API abrufen und speichern. |
 | `train model` | – | Modell auf den gespeicherten Trainingsdaten trainieren. |
 | `train all` | `[--seasons …] [--max-games N]` | Datensammlung **und** Training in einem Schritt (empfohlen). |
 | `train metrics` | – | Metriken des zuletzt trainierten Modells anzeigen. |
-| `compare` | `[--home …] [--away …]` | Vergleich KI-Wahrscheinlichkeit vs. Buchmacherquoten (alle anstehenden Spiele oder ein konkretes Duell). |
+| `compare` | `[--home …] [--away …]` | Modellwahrscheinlichkeit vs. aus Quoten abgeleitete Wahrscheinlichkeit (alle anstehenden Spiele oder ein konkretes Duell). |
 
 **Beispiele:**
 
@@ -147,7 +157,7 @@ python main.py train all
 # Vorhersage für ein Spiel
 python main.py ml-predict "Lakers" "Celtics"
 
-# Alle anstehenden Spiele auf Value Bets prüfen
+# Modell und Quoten für alle anstehenden Spiele vergleichen
 python main.py compare
 
 # Ergebnisse von gestern
@@ -182,7 +192,7 @@ Das Dashboard enthält außerdem einen **automatischen Monats-Scheduler**: Erken
 
 Um Laufzeitfehler während des laufenden Betriebs (insbesondere bei inkonsistenten API-Antworten) zu verhindern, setzt NBA Predict auf:
 *   **Integriertes Exception Handling:** Fehler bei Netzwerkanfragen werden durch spezifische Exceptions (`ApiError`) abgefangen. Es existiert eine automatisierte Retry-Logik mit Backoff für vorübergehende API-Ausfälle.
-*   **Zentrales Logging:** Alle relevanten Ereignisse, Warnungen und Fehler werden zentral erfasst und in die Datei `logs/nba_predict.log` geschrieben. Dies erlaubt eine präzise Überwachung des Docker-Containers (`nba-predict-web`) in Produktion.
+*   **Zentrales Logging:** Alle relevanten Ereignisse, Warnungen und Fehler werden zentral erfasst und in die Datei `logs/nba_predict.log` geschrieben. Darüber lässt sich auch der Docker-Container (`nba-predict-web`) im laufenden Betrieb überwachen.
 
 ---
 
@@ -216,7 +226,7 @@ Die gewählten Technologien entsprechen modernen Data-Science-Standards:
 
 ## 11. BEKANNTE EINSCHRÄNKUNGEN
 
-*   **Modellgenauigkeit:** Die aktuelle Accuracy liegt bei ~65 %. Da das NBA-Ergebnis von zahlreichen schwer quantifizierbaren Faktoren abhängt (Verletzungen, Back-to-Back-Fatigue, Play-Off-Motivation), ist dies für ein statistisches Modell ein solider Benchmark. Zum Vergleich: kommerzielle Anbieter erreichen selten mehr als 68–70 %.
+*   **Modellgenauigkeit:** Das aktive Modell erreicht 66,7 % Accuracy auf dem Testset (Heimteam-Baseline: 55,1 %, siehe Abschnitt 1). Verletzungen, Kaderwechsel und Play-off-Motivation sind in den Merkmalen nicht enthalten und begrenzen die erreichbare Genauigkeit.
 *   **API Rate Limits:** The Odds API erlaubt im kostenlosen Tier nur 500 Anfragen pro Monat. Bei intensiver Nutzung des `compare`-Befehls kann dieses Kontingent schnell aufgebraucht sein.
 *   **Keine Echtzeit-Daten:** Während laufender Spiele werden keine Live-Play-by-Play-Daten aktualisiert. Scores und Spielstatus werden erst nach Spielende zuverlässig angezeigt.
 *   **Trainingszeit:** `train all` kann je nach Datenmenge und Hardware zwischen 2 und 10 Minuten dauern. Der erste Lauf lädt mehrere Saisons Daten von der NBA-API und ist entsprechend langsamer.
